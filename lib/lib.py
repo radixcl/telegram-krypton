@@ -8,10 +8,9 @@ from lib import globvars
 
 # get configuration
 try:
-    print("CONFIG: %s" % globvars.config_file)
     config = json.load(open(globvars.config_file))
 except:
-    print('Could not open config.json', file=sys.stderr)
+    print('Could not open config file %s' % globvars.config_file, file=sys.stderr)
     sys.exit(1)
 
 c = None
