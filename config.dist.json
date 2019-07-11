@@ -1,0 +1,5 @@
+{
+    "telegram_token": "your_telegram_bot_token",
+    "admins": ["admin_nickname1", "admin_nickname2"],
+    "learners": ["learner_nickname_1", "learner_nickname_2"]
+}
