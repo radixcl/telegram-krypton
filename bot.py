@@ -66,7 +66,12 @@ def proc_message(bot, update):
         response = '*%s* == `%s`' % (res[0], res_txt)
         if verbose == True:
             response += '\n_(author: %s) (%s)' % (res[2], time.ctime(int(res[1]))) + '_'
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        
+        try:
+            bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        except:
+            # FIXME
+            bot.send_message(chat_id=chat_id, text='`ERROR CTM! (FIXME)`', parse_mode='Markdown')
     
     # parse "!learn key value" requests
     elif text[:6] == '!learn':
@@ -250,7 +255,7 @@ def main():
     # on noncommand i.e message - echo the message on Telegram
     dp.add_handler(MessageHandler(Filters.text, proc_message))
     # log all errors
-    dp.add_error_handler(error)
+    #dp.add_error_handler(error)
     # Start the Bot
     updater.start_polling()
     updater.idle()

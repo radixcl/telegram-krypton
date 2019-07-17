@@ -16,7 +16,6 @@ except:
 
 c = None
 conn = None
-sys.setrecursionlimit(200)
 
 # common functions
 def open_db():
@@ -37,16 +36,18 @@ def is_admin(username):
 def is_learner(username):
     return username in config['admins'] or username in config['learners']
 
-def get_def(key):
+def get_def(key, rec=0):
+
+    if rec == 10:
+        # excess recursion
+        return None
+
     c.execute('SELECT k, c, a, f, d FROM defs WHERE LOWER(k)=?', [key.lower()])
     res = c.fetchone()
 
     try:
         if res is not None and shlex.split(res[4])[0] == 'see' and len(shlex.split(res[4])) == 2:
-            try:
-                res = get_def(shlex.split(res[4])[1])
-            except RecursionError:
-                return None
+            res = get_def(shlex.split(res[4])[1], rec+1)
     except IndexError :
         pass
 
