@@ -47,6 +47,8 @@ def proc_message(bot, update):
             bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
             return
 
+        _key = data[1]
+
         if _key == '-a':
             verbose = True
             try:
