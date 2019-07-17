@@ -88,6 +88,14 @@ def proc_message(bot, update):
         except:
             pass
 
+        try:
+            if data[0] == '-f':
+                if lib.is_admin(username):
+                    lib.del_key(data[1])
+                _ = lib.pop_first(data)
+        except:
+            pass
+
         # get key
         try:
             key = lib.pop_first(data)
