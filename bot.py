@@ -48,6 +48,10 @@ def proc_message(bot, update):
             return
 
         _key = data[1]
+        if _key == 'see' and len(data) == 3:
+            # parse "see" link
+            _key = data[2]
+
         if _key == '-a':
             verbose = True
             try:
