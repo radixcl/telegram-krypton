@@ -3,6 +3,7 @@
 import sys
 import json
 import sqlite3
+import shlex
 
 from lib import globvars
 
@@ -38,6 +39,10 @@ def is_learner(username):
 def get_def(key):
     c.execute('SELECT k, c, a, f, d FROM defs WHERE LOWER(k)=?', [key.lower()])
     res = c.fetchone()
+
+    if res is not None and shlex.split(res[4])[0] == 'see' and len(shlex.split(res[0])) == 2:
+        res = get_def(shlex.split(res[4])[1])
+
     return res
 
 def add_def(key, ts, author, flags, text):
