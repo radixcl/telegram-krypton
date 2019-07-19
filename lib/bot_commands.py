@@ -75,7 +75,7 @@ def proc_command(bot, update):
         admins = config.get('admins', [])
         for i in params:
             if i[0] == '@': i = i[1:]   # remove @ from the username
-            admins.append(i)
+        admins.append(i)
         config["admins"] = admins
         response = "Done."
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
@@ -105,7 +105,7 @@ def proc_command(bot, update):
         learners = config.get('learners', [])
         for i in params:
             if i[0] == '@': i = i[1:]   # remove @ from the username
-            learners.append(i)
+        learners.append(i)
         config["learners"] = learners
         response = "Done."
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
