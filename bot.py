@@ -12,6 +12,7 @@ import sqlite3
 import time
 import json
 import shlex
+import pickle
 
 from lib import globvars
 try:
@@ -20,10 +21,11 @@ except:
     globvars.config_file = './config.json'
 
 from lib import lib
+from lib import bot_commands
 
 conn = lib.conn
 c = lib.c
-config = lib.config
+config = lib.load_config()
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -32,7 +34,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 def proc_message(bot, update):
-    chat_id = update.message.chat_id
+    chat_id = update.message.chat.id
+    user_id = update.message.from_user.id
+    chat_title = update.message.chat.title
+    chat_type = update.message.chat.type
     text = update.message.text
     verbose = False
     if update.message.from_user.username is not None:
@@ -40,9 +45,56 @@ def proc_message(bot, update):
     else:
         username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
 
+    # tracking
+    if not None in (update.message.from_user.username, update.message.from_user.id):
+        globvars.users_track[update.message.from_user.username] = update.message.from_user.id
+        #print("TRACK USER: %s -> %s" % (update.message.from_user.username, update.message.from_user.id))
+
+    if not str(chat_id) in globvars.groups_member_track:
+        globvars.groups_member_track[str(chat_id)] = []
+
+    if update.message.chat.type in ('group', 'channel', 'supergroup'):
+        globvars.groups_name_track[chat_id] = update.message.chat.title
+
+        if len(update.message.new_chat_members) > 0:
+            for member in update.message.new_chat_members:
+                if member.username is not None:
+                    globvars.users_track[member.username] = member.id
+                    #print("TRACK USER: %s -> %s" % (member.username, member.id))
+                if user_id not in set(globvars.groups_member_track[str(chat_id)]):
+                    globvars.groups_member_track[str(chat_id)].append(member.id)
+                    #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, member.id))
+
+
+        elif update.message.left_chat_member is not None:
+            member = update.message.left_chat_member
+            if member.username is not None:
+                globvars.users_track[member.username] = member.id
+                #print("TRACK USER: %s -> %s" % (member.username, member.id))
+            try:
+                globvars.groups_member_track[str(chat_id)].remove(member.id)
+                #print("TRACK REMOVE MEMBER: %s -> %s" % (chat_id, member.id))
+                return
+            except:
+                pass
+
+        else:
+            if user_id not in set(globvars.groups_member_track[str(chat_id)]):
+                globvars.groups_member_track[str(chat_id)].append(user_id)
+                #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, user_id))
+
+
+    if text is None:
+        # not a chat message
+        return
+
     # parse "?? definition" queries
     if text[:2] == '??':
-        data = shlex.split(text)
+        try:
+            data = shlex.split(text)
+        except ValueError:
+            data = text.split()
+        
         if len(data) < 2:
             bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
             return
@@ -237,23 +289,39 @@ def proc_message(bot, update):
         response = 'Matched %s key(s): %s' % (total, results)
         bot.send_message(chat_id=chat_id, text=response)
 
-
 def error(bot, update, a):
     """Log Errors caused by Updates."""
     logger.warning('Update "%s" caused error "%s"', bot, update)
 
+def sig_handler(signum, frame):
+    print("Saving config...")
+    lib.save_config(config)
 
 def main():
     lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
 
-    updater = Updater(config["telegram_token"])
+    updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
     dp = updater.dispatcher
 
     # on different commands - answer in Telegram
-    #dp.add_handler(CommandHandler("start", start))
-    # on noncommand i.e message - echo the message on Telegram
-    dp.add_handler(MessageHandler(Filters.text, proc_message))
+    dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("getadmins", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("getlearners", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("addlearner", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("dellearner", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("reloadcfg", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("savecfg", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("getchatid", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("globvars", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("getuserid", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("kick", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("op", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("deop", bot_commands.proc_command))
+
+    # text message handler
+    dp.add_handler(MessageHandler(Filters.all, proc_message))
+
     # log all errors
     #dp.add_error_handler(error)
     # Start the Bot

@@ -8,11 +8,31 @@ import shlex
 from lib import globvars
 
 # get configuration
-try:
-    config = json.load(open(globvars.config_file))
-except:
-    print('Could not open config file %s' % globvars.config_file, file=sys.stderr)
-    sys.exit(1)
+def load_config():
+    global config
+    try:
+        cfg = json.load(open(globvars.config_file))
+    except:
+        print('Could not open config file %s' % globvars.config_file, file=sys.stderr)
+        sys.exit(1)
+
+    globvars.groups_name_track = cfg.get('groups_name_track', {})
+    globvars.groups_member_track = cfg.get('groups_member_track', {})
+    globvars.users_track = cfg.get('users_track', {})
+
+    config = cfg
+    return cfg
+
+# save config to json file
+def save_config(cfg):
+    cfg['groups_name_track'] = globvars.groups_name_track
+    cfg['groups_member_track'] = globvars.groups_member_track
+    cfg['users_track'] = globvars.users_track
+
+    with open(globvars.config_file, 'w') as f:
+        json.dump(cfg, f, indent=4)
+
+config = load_config()
 
 c = None
 conn = None
@@ -118,7 +138,6 @@ def find_value(s):
         retval += k[0] + ' '
     retval = retval.strip()
     return count, retval
-
 
 def pop_first(l):
     l.reverse()
