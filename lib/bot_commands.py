@@ -24,8 +24,8 @@ def proc_command(bot, update):
         command = text.split()[0]
         params = text.split()[1:]
     
-    print("command", command)
-    print("params", params)
+    #print("command", command)
+    #print("params", params)
 
     if command == '/reloadcfg' and lib.is_admin(username):
         config = lib.load_config()

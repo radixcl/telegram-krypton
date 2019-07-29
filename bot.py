@@ -84,12 +84,13 @@ def proc_message(bot, update):
                 #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, user_id))
 
 
-    if text is None:
+    if text is None or text == '':
         # not a chat message
         return
 
+    cmd = text.split()[0]
     # parse "?? definition" queries
-    if text[:2] == '??':
+    if cmd == '??':
         try:
             data = shlex.split(text)
         except ValueError:
@@ -126,7 +127,7 @@ def proc_message(bot, update):
             bot.send_message(chat_id=chat_id, text='`ERROR CTM! (FIXME)`', parse_mode='Markdown')
     
     # parse "!learn key value" requests
-    elif text[:6] == '!learn':
+    elif cmd == '!learn':
         if not lib.is_learner(username):
             #response = "Adonde la viste @%s" % username
             #bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
@@ -180,7 +181,7 @@ def proc_message(bot, update):
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
 
     # parse "!forget key" requests
-    elif text[:7] == '!forget':
+    elif cmd == '!forget':
         if not lib.is_learner(username):
             return
 
@@ -212,7 +213,7 @@ def proc_message(bot, update):
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
 
     # parse "!lock key" requests
-    elif text[:5] == '!lock':
+    elif cmd == '!lock':
         if not lib.is_admin(username):
             return
 
@@ -233,7 +234,7 @@ def proc_message(bot, update):
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
 
     # parse "!unlock key" requests
-    elif text[:7] == '!unlock':
+    elif cmd == '!unlock':
         if not lib.is_admin(username):
             return
 
@@ -254,7 +255,7 @@ def proc_message(bot, update):
         bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
 
     # parse "!listkeys" requests
-    elif text[:9] == '!listkeys':
+    elif cmd == '!listkeys':
         data = shlex.split(text)
         # remove !command from data
         _ = lib.pop_first(data)
@@ -272,7 +273,7 @@ def proc_message(bot, update):
         bot.send_message(chat_id=chat_id, text=response)
 
     # parse "!find" requests
-    elif text[:5] == '!find':
+    elif cmd == '!find':
         data = shlex.split(text)
         # remove !command from data
         _ = lib.pop_first(data)
