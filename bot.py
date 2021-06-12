@@ -7,7 +7,10 @@
 
 import sys
 import logging
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
+
+from telegram import Update, ForceReply
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+
 import sqlite3
 import time
 import json
@@ -33,20 +36,27 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 logger = logging.getLogger(__name__)
 
-def proc_message(bot, update):
-    chat_id = update.message.chat.id
-    user_id = update.message.from_user.id
+#def proc_message(bot, update):
+def proc_message(update: Update, context: CallbackContext) -> None:
+    #chat_id = update.message.chat.id
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    user_id = user.id
+    bot = context.bot
     chat_title = update.message.chat.title
     chat_type = update.message.chat.type
     text = update.message.text
     verbose = False
-    if update.message.from_user.username is not None:
-        username = update.message.from_user.username
+
+    print('update.message:', update.message)
+
+    if user.username is not None:
+        username = user.username
     else:
-        username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
+        username = "%s %s" % (user.first_name, user.last_name)
 
     # tracking
-    if not None in (update.message.from_user.username, update.message.from_user.id):
+    if not None in (username, update.message.from_user.id):
         globvars.users_track[update.message.from_user.username] = update.message.from_user.id
         #print("TRACK USER: %s -> %s" % (update.message.from_user.username, update.message.from_user.id))
 

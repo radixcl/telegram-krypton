@@ -4,10 +4,14 @@ import time
 from lib import globvars
 from lib import lib
 
+from telegram import Update, ForceReply
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+
 config = lib.load_config()
 
-def proc_command(bot, update):
+def proc_command(update: Update, context: CallbackContext) -> None:
     global config
+    bot = context.bot
     chat_id = update.message.chat.id
     chat_title = update.message.chat.title
     chat_type = update.message.chat.type
