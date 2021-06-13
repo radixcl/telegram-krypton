@@ -125,16 +125,21 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             bot.send_message(chat_id=chat_id, text="Entry *%s* not found." % _key, parse_mode='Markdown')
             return
         res_txt = res[4]
-        res_txt = res_txt.replace('%n', '`@' + username + '`')
-        response = '*%s* == `%s`' % (res[0], res_txt)
+        answer_mode = 'Markdown'
+        if lib.is_url(res_txt):
+            answer_mode = 'html'
+            response = response = '<b>%s</b> == %s' % (res[0], res_txt)
+        else:
+            res_txt = res_txt.replace('%n', '`@' + username + '`')
+            response = '*%s* == `%s`' % (res[0], res_txt)
         if verbose == True:
             response += '\n_(author: %s) (%s)' % (res[2], time.ctime(int(res[1]))) + '_'
         
         try:
-            bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        except:
+            bot.send_message(chat_id=chat_id, text=response, parse_mode=answer_mode)
+        except Exception as ex:
             # FIXME
-            bot.send_message(chat_id=chat_id, text='`ERROR CTM! (FIXME)`', parse_mode='Markdown')
+            bot.send_message(chat_id=chat_id, text='ERROR CTM! (FIXME): ' + str(ex), parse_mode='Markdown')
     
     # parse "!learn key value" requests
     elif cmd == '!learn':

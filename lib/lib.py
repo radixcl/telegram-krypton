@@ -4,6 +4,7 @@ import sys
 import json
 import sqlite3
 import shlex
+import re
 
 from lib import globvars
 
@@ -144,3 +145,14 @@ def pop_first(l):
     r = l.pop()
     l.reverse()
     return r
+
+def is_url(text):
+    regex = re.compile(
+            r'^(?:http|ftp)s?://' # http:// or https://
+            r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|' #domain...
+            r'localhost|' #localhost...
+            r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})' # ...or ip
+            r'(?::\d+)?' # optional port
+            r'(?:/?|[/?]\S+)$', re.IGNORECASE)
+    
+    return re.match(regex, text) is not None
