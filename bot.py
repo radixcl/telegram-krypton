@@ -9,6 +9,7 @@ import sys
 import logging
 
 from telegram import Update, ForceReply
+import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
 import sqlite3
@@ -25,6 +26,8 @@ except:
 
 from lib import lib
 from lib import bot_commands
+
+from pprint import pprint
 
 conn = lib.conn
 c = lib.c
@@ -45,7 +48,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     text = update.message.text
     verbose = False
 
-    print('update.message:', update.message)
+    print(str(update))
 
     if user.username is not None:
         username = user.username
@@ -173,6 +176,20 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             def_txt = ' '.join(data)
         except:
             def_txt = ''
+        
+        if def_txt == '':
+            if hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'from_user'):
+                if hasattr(update.message.reply_to_message.from_user, 'username'):
+                    _user = update.message.reply_to_message.from_user.username
+                else:
+                    _user = update.message.reply_to_message.from_user.first_name
+
+                def_txt = f'<@{_user}> {str(update.message.reply_to_message.text)}'
+
+            #update.message.reply_text(str(update.message.reply_to_message.text))
+            #bot.send_message(chat_id=chat_id, text=".", reply_to_message_id=467)
+            #bot.send_message(chat_id=chat_id, text=def_txt)
+            #return
 
         try:
             lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', learn_flags, def_txt)
