@@ -36,15 +36,12 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 
 logger = logging.getLogger(__name__)
 
-#def proc_message(bot, update):
 def proc_message(update: Update, context: CallbackContext) -> None:
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
     user = update.effective_user
     user_id = user.id
     bot = context.bot
-    chat_title = update.message.chat.title
-    chat_type = update.message.chat.type
     text = update.message.text
     verbose = False
 
