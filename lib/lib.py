@@ -156,3 +156,44 @@ def is_url(text):
             r'(?:/?|[/?]\S+)$', re.IGNORECASE)
     
     return re.match(regex, text) is not None
+
+def is_message_text_only(reply):
+    if not reply:
+        return False
+
+    has_media = any([
+        reply.photo,
+        reply.video,
+        reply.animation,
+        reply.document,
+        reply.audio,
+        reply.voice,
+        reply.video_note,
+        reply.sticker,
+        reply.contact,
+        reply.location,
+        reply.venue,
+    ])
+    
+    return not has_media and reply.text is not None
+
+def message_contains_media(reply):
+    if not reply:
+        return False
+
+    # Verificar si el mensaje citado contiene algún tipo de medio
+    has_media = any([
+        reply.photo,
+        reply.video,
+        reply.animation,
+        reply.document,
+        reply.audio,
+        reply.voice,
+        reply.video_note,
+        reply.sticker,
+        reply.contact,
+        reply.location,
+        reply.venue,
+    ])
+    
+    return has_media

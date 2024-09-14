@@ -195,33 +195,62 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         except:
             def_txt = ''
         
-        if def_txt == '':
-            # check if message is a reply and has a photo
-            if hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'photo'):
-                if hasattr(update.message.reply_to_message.from_user, 'username'):
-                    _user = update.message.reply_to_message.from_user.username
-                else:
-                    _user = update.message.reply_to_message.from_user.first_name
+        print(update.message)
 
-                # save message reference to later address it
-                message_id = update.message.reply_to_message.message_id
-                # get photo file id
-                file_id = update.message.reply_to_message.photo[-1].file_id
+        if def_txt == '':
+            allowed_media_types = ['photo', 'video', 'animation', 'document', 'audio', 'voice', 'video_note']
+
+            # Verificar si el mensaje es una respuesta a otro mensaje
+            if update.message.reply_to_message:
+                # Manejar mensajes citados
+                if lib.is_message_text_only(update.message.reply_to_message):
+                    if hasattr(update.message.reply_to_message.from_user, 'username'):
+                        _user = update.message.reply_to_message.from_user.username
+                    else:
+                        _user = update.message.reply_to_message.from_user.first_name
+
+                    def_txt = f'<@{_user}> {str(update.message.reply_to_message.text)}'
+
+                elif lib.message_contains_media(update.message.reply_to_message):
+                    # Obtener el tipo de medio actual
+                    media_type = next(media_type for media_type in allowed_media_types if hasattr(update.message.reply_to_message, media_type))
+                    print("media type:", media_type)
+                    if hasattr(update.message.reply_to_message.from_user, 'username'):
+                        _user = update.message.reply_to_message.from_user.username
+                    else:
+                        _user = update.message.reply_to_message.from_user.first_name
+
+                    # Guardar la referencia del mensaje para usarla más tarde
+                    message_id = update.message.reply_to_message.message_id
+                    # Obtener el file_id de la foto
+                    file_id = update.message.reply_to_message.photo[-1].file_id
+                    def_txt = f'.tg_reply_to:{message_id}:{file_id}'
+
+            # Manejar mensajes directos con medios
+            # FIXME: No funca pq cmd viene desde text, buscar otra forma
+            elif lib.message_contains_media(update.message):
+                media_type = next(media_type for media_type in allowed_media_types if hasattr(update.message, media_type))
+                print("media type:", media_type)
+                if hasattr(update.message.from_user, 'username'):
+                    _user = update.message.from_user.username
+                else:
+                    _user = update.message.from_user.first_name
+
+                # Guardar la referencia del mensaje para usarla más tarde
+                message_id = update.message.message_id
+                # Obtener el file_id de la foto
+                file_id = update.message.photo[-1].file_id
                 def_txt = f'.tg_reply_to:{message_id}:{file_id}'
 
-            elif hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'from_user'):
-                if hasattr(update.message.reply_to_message.from_user, 'username'):
-                    _user = update.message.reply_to_message.from_user.username
-                else:
-                    _user = update.message.reply_to_message.from_user.first_name
+            # Manejar mensajes directos que solo contienen texto
+            elif update.message.text:
+                def_txt = update.message.text
 
-                def_txt = f'<@{_user}> {str(update.message.reply_to_message.text)}'
-
-            #update.message.reply_text(str(update.message.reply_to_message.text))
-            #bot.send_message(chat_id=chat_id, text=".", reply_to_message_id=467)
-            #bot.send_message(chat_id=chat_id, text=def_txt)
-            #return
-
+            else:
+                response = 'Expected definition, found NUL.'
+                bot.send_message(chat_id=chat_id, text=response)
+                return
+            
         try:
             lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', learn_flags, def_txt)
         except(sqlite3.IntegrityError):
