@@ -27,7 +27,7 @@ except:
 from lib import lib
 from lib import bot_commands
 
-from pprint import pprint
+import pprint
 
 conn = lib.conn
 c = lib.c
@@ -47,8 +47,6 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     bot = context.bot
     text = update.message.text
     verbose = False
-
-    print(str(update))
 
     if user.username is not None:
         username = user.username
@@ -129,6 +127,20 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         if lib.is_url(res_txt):
             answer_mode = 'html'
             response = response = '<b>%s</b> == %s' % (res[0], res_txt)
+        
+        # check if res_txt starts with .tg_reply_to:
+        if res_txt.startswith('.tg_reply_to:'):
+            answer_mode = 'html'
+            # get message_id and file_id
+            _, message_id, file_id = res_txt.split(':')
+            # send photo
+            #bot.send_photo(chat_id=chat_id, photo=file_id, reply_to_message_id=int(message_id))
+            text = "%s:" % res[0]
+            if verbose == True:
+                text += '\n(author: %s) (%s)' % (res[2], time.ctime(int(res[1])))
+            bot.send_photo(chat_id=chat_id, photo=file_id, caption=text)
+            return
+
         else:
             res_txt = res_txt.replace('%n', '`@' + username + '`')
             response = '*%s* == `%s`' % (res[0], res_txt)
@@ -140,6 +152,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         except Exception as ex:
             # FIXME
             bot.send_message(chat_id=chat_id, text='ERROR CTM! (FIXME): ' + str(ex), parse_mode='Markdown')
+            print(response)
     
     # parse "!learn key value" requests
     elif cmd == '!learn':
@@ -183,7 +196,20 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             def_txt = ''
         
         if def_txt == '':
-            if hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'from_user'):
+            # check if message is a reply and has a photo
+            if hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'photo'):
+                if hasattr(update.message.reply_to_message.from_user, 'username'):
+                    _user = update.message.reply_to_message.from_user.username
+                else:
+                    _user = update.message.reply_to_message.from_user.first_name
+
+                # save message reference to later address it
+                message_id = update.message.reply_to_message.message_id
+                # get photo file id
+                file_id = update.message.reply_to_message.photo[-1].file_id
+                def_txt = f'.tg_reply_to:{message_id}:{file_id}'
+
+            elif hasattr(update.message, 'reply_to_message') and hasattr(update.message.reply_to_message, 'from_user'):
                 if hasattr(update.message.reply_to_message.from_user, 'username'):
                     _user = update.message.reply_to_message.from_user.username
                 else:
