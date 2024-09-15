@@ -127,6 +127,9 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         if lib.is_url(res_txt):
             answer_mode = 'html'
             response = response = '<b>%s</b> == %s' % (res[0], res_txt)
+        else:
+            res_txt = res_txt.replace('%n', '`@' + username + '`')
+            response = '*%s* == `%s`' % (res[0], res_txt)
         
         # check if res_txt starts with .tg_reply_to:
         if res_txt.startswith('.tg_reply_to:'):
@@ -135,17 +138,16 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             _, message_id, file_id = res_txt.split(':')
             # send photo
             #bot.send_photo(chat_id=chat_id, photo=file_id, reply_to_message_id=int(message_id))
-            text = "%s:" % res[0]
+            text = "<b>%s</b> == " % res[0]
             if verbose == True:
-                text += '\n(author: %s) (%s)' % (res[2], time.ctime(int(res[1])))
-            bot.send_photo(chat_id=chat_id, photo=file_id, caption=text)
+                text += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
+            bot.send_photo(chat_id=chat_id, photo=file_id, caption=text, parse_mode=answer_mode)
             return
 
-        else:
-            res_txt = res_txt.replace('%n', '`@' + username + '`')
-            response = '*%s* == `%s`' % (res[0], res_txt)
-        if verbose == True:
+        if verbose == True and answer_mode == 'Markdown':
             response += '\n_(author: %s) (%s)' % (res[2], time.ctime(int(res[1]))) + '_'
+        elif verbose == True and answer_mode == 'html':
+            response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
         
         try:
             bot.send_message(chat_id=chat_id, text=response, parse_mode=answer_mode)
