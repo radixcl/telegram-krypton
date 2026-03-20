@@ -2,5 +2,10 @@
     "telegram_token": "your_telegram_bot_token",
     "database_file": "learn.db",
     "admins": ["admin_nickname1", "admin_nickname2"],
-    "learners": ["learner_nickname_1", "learner_nickname_2"]
+    "learners": ["learner_nickname_1", "learner_nickname_2"],
+    "ai_api_url": "https://openrouter.ai/api/v1/chat/completions",
+    "ai_model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+    "ai_api_key": "your-openrouter-api-key",
+    "ai_context_size": 50,
+    "ai_enabled": true
 }

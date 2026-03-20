@@ -1,0 +1,19 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.pyc
+.pyd
+
+# Virtual environments
+venv/
+
+# Configuration files
+config.json
+
+# Database files
+learn.db
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp

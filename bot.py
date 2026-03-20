@@ -26,12 +26,19 @@ except:
 
 from lib import lib
 from lib import bot_commands
+from lib import ai
 
 import pprint
+from collections import deque
 
 conn = lib.conn
 c = lib.c
 config = lib.load_config()
+
+# Initialize per-chat history cache
+globvars.chat_history = {}
+ai_context_size = config.get('ai_context_size', 50)
+ai_enabled = config.get('ai_enabled', False)
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -61,6 +68,18 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     if not str(chat_id) in globvars.groups_member_track:
         globvars.groups_member_track[str(chat_id)] = []
 
+    # Track message in chat history (for AI context)
+    if not str(chat_id) in globvars.chat_history:
+        globvars.chat_history[str(chat_id)] = deque(maxlen=ai_context_size)
+    
+    if text and text.strip():
+        msg_record = {
+            'author': username,
+            'text': text,
+            'timestamp': time.time()
+        }
+        globvars.chat_history[str(chat_id)].append(msg_record)
+
     if update.message.chat.type in ('group', 'channel', 'supergroup'):
         globvars.groups_name_track[chat_id] = update.message.chat.title
 
@@ -72,7 +91,6 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 if user_id not in set(globvars.groups_member_track[str(chat_id)]):
                     globvars.groups_member_track[str(chat_id)].append(member.id)
                     #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, member.id))
-
 
         elif update.message.left_chat_member is not None:
             member = update.message.left_chat_member
@@ -375,6 +393,25 @@ def proc_message(update: Update, context: CallbackContext) -> None:
 
         response = 'Matched %s key(s): %s' % (total, results)
         bot.send_message(chat_id=chat_id, text=response)
+
+    # AI mention handler (when bot is mentioned with @botname)
+    elif ai_enabled and bot.username in text:
+        # Extract the question (remove bot mention from text)
+        bot_mention = f"@{bot.username}"
+        question = text.replace(bot_mention, '').strip()
+        
+        if question:
+            # Get chat context
+            chat_history = globvars.chat_history.get(str(chat_id), [])
+            context_messages = ai.build_context(chat_history, ai_context_size)
+            
+            # Call AI API
+            response_text = ai.call_ai_api(context_messages, question, config)
+            
+            if response_text:
+                bot.send_message(chat_id=chat_id, text=response_text)
+            else:
+                bot.send_message(chat_id=chat_id, text=f"Sorry, I couldn't process that request.")
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
