@@ -9,6 +9,7 @@
     "ai_context_size": 50,
     "ai_enabled": true,
     "ai_enable_private": true,  # Enable AI responses in private chats (false = groups only)
+    "ai_rate_limit_seconds": 5,  # Minimum seconds between AI API calls (rate limiting)
     "ai_system_prompt": "You are a helpful AI assistant in a Telegram chat. Answer questions based on the conversation context. Keep responses concise, friendly, and relevant to the chat flow.",
     "groups_name_track": {},
     "groups_member_track": {},

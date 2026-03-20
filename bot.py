@@ -27,6 +27,7 @@ except:
 from lib import lib
 from lib import bot_commands
 from lib import ai
+from lib import ai_worker
 
 import pprint
 from collections import deque
@@ -40,6 +41,10 @@ globvars.chat_history = {}
 ai_context_size = config.get('ai_context_size', 50)
 ai_enabled = config.get('ai_enabled', False)
 ai_enable_private = config.get('ai_enable_private', False)
+ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
+
+# Initialize AI worker
+ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -404,8 +409,10 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             # Private chat: respond if ai_enable_private is True
             should_respond = ai_enable_private
         else:
-            # Group chat: respond only if bot is mentioned
-            should_respond = bot.username in text
+            # Group chat: respond if bot is mentioned in text OR in reply
+            bot_mention = f"@{bot.username}"
+            should_respond = bot_mention in text or \
+                (update.message.reply_message and bot_mention in update.message.reply_message.text)
         
         if should_respond:
             # Extract question (remove bot mention if present)
@@ -416,20 +423,12 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 question = text.strip()
             
             if question:
-                # Show typing indicator while AI is generating response
-                bot.send_chat_action(chat_id=chat_id, action='typing')
-                
                 # Get chat context
                 chat_history = globvars.chat_history.get(str(chat_id), [])
                 context_messages = ai.build_context(chat_history, ai_context_size)
                 
-                # Call AI API
-                response_text = ai.call_ai_api(context_messages, question, config)
-                
-                if response_text:
-                    bot.send_message(chat_id=chat_id, text=response_text)
-                else:
-                    bot.send_message(chat_id=chat_id, text=f"Sorry, I couldn't process that request.")
+                # Submit to AI worker (non-blocking)
+                ai_worker_instance.submit(chat_id, context_messages, question, config)
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
@@ -438,6 +437,7 @@ def error(bot, update, a):
 def sig_handler(signum, frame):
     print("Saving config...")
     lib.save_config(config)
+    ai_worker_instance.stop()
 
 def main():
     lib.open_db()
@@ -445,6 +445,10 @@ def main():
 
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
     dp = updater.dispatcher
+    
+    # Start AI worker if AI is enabled
+    if ai_enabled:
+        ai_worker_instance.start(updater.bot)
 
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))
