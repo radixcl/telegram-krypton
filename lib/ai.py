@@ -88,13 +88,15 @@ Format your response naturally as if you're participating in the conversation.""
 def build_context(messages_list, context_size=50):
     """
     Build context from recent messages.
-    
+
     Args:
         messages_list: List of message dicts (author, text, timestamp)
         context_size: Maximum number of messages to include
-    
+
     Returns:
         Truncated list of recent messages
     """
-    # Return last N messages
+    # Return last N messages (convert deque to list for Python 3.6 compatibility)
+    if not isinstance(messages_list, list):
+        messages_list = list(messages_list)
     return messages_list[-context_size:]
