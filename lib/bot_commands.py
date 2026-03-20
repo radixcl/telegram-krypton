@@ -1,13 +1,66 @@
 import shlex
 import json
 import time
+import logging
 from lib import globvars
 from lib import lib
 
 from telegram import Update, ForceReply
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
+logger = logging.getLogger(__name__)
+
 config = lib.load_config()
+
+def get_chat_members(bot, chat_id, limit=None):
+    """
+    Get members of a chat using Telegram Bot API.
+    
+    Args:
+        bot: Telegram Bot instance
+        chat_id: Chat ID
+        limit: Maximum number of members to retrieve (None = default)
+    
+    Returns:
+        List of dicts with user info
+    """
+    members = []
+    offset = None
+    
+    while True:
+        try:
+            if offset:
+                params = {'chat_id': chat_id, 'limit': limit, 'offset': offset}
+            else:
+                params = {'chat_id': chat_id, 'limit': limit}
+            
+            result = bot.get_chat_members(chat_id, **params)
+            
+            for member in result:
+                user_info = {
+                    'id': member.user.id,
+                    'username': member.user.username or 'No username',
+                    'first_name': member.user.first_name or '',
+                    'last_name': member.user.last_name or '',
+                    'full_name': (member.user.first_name or '') + (
+                        ' ' + (member.user.last_name or '') if member.user.last_name else ''
+                    ).strip(),
+                    'is_admin': member.status == 'administrator',
+                    'is_member': member.status in ('member', 'administrator'),
+                    'is_outside': member.status == 'kicked',
+                    'is_bot': member.user.is_bot
+                }
+                members.append(user_info)
+            
+            if not result or len(members) >= limit:
+                break
+            offset = members[-1]['id']
+            
+        except Exception as e:
+            logger.error(f"Error getting chat members: {e}")
+            break
+    
+    return members
 
 def proc_command(update: Update, context: CallbackContext) -> None:
     global config
@@ -204,4 +257,102 @@ def proc_command(update: Update, context: CallbackContext) -> None:
                 )
         except Exception as ex:
             bot.send_message(chat_id=chat_id, text=str(ex), parse_mode='Markdown')
+        return
+
+    elif command == '/listmembers' and lib.is_admin(username):
+        if not params:
+            bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>', parse_mode='Markdown')
+            return
+        
+        group_name = params[0]
+        
+        try:
+            # Search for chat by title using globvars.groups_name_track
+            chats = []
+            for chat_id, chat_title in globvars.groups_name_track.items():
+                if group_name.lower() in chat_title.lower():
+                    chats.append({
+                        'chat_id': chat_id,
+                        'chat_title': chat_title
+                    })
+            
+            if not chats:
+                bot.send_message(chat_id=chat_id, text=f'No chats found with name "*{group_name}*"', parse_mode='Markdown')
+                return
+            
+            if len(chats) > 1:
+                bot.send_message(chat_id=chat_id, text=f'Found {len(chats)} matching chats:\n\n', parse_mode='Markdown')
+                for i, c in enumerate(chats, 1):
+                    bot.send_message(chat_id=chat_id, text=f'{i}. *{c["chat_id"]}*: {c["chat_title"]}', parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text='\nPlease specify the exact chat_id or use one of the numbers above.', parse_mode='Markdown')
+                return
+            
+            chat_id = chats[0]['chat_id']
+            
+            # Get members
+            members = get_chat_members(bot, chat_id)
+            
+            # Format response
+            response = f'📋 Members of *{chat_title}*\n'
+            response += f'👥 Total: *{len(members)}* members\n\n'
+            
+            # Separate by type
+            admins = [m for m in members if m['is_admin'] and not m['is_bot'] and not m['is_outside']]
+            members_only = [m for m in members if m['is_member'] and not m['is_admin'] and not m['is_bot'] and not m['is_outside']]
+            kicked = [m for m in members if m['is_outside'] and not m['is_bot']]
+            
+            if admins:
+                response += f'👑 Admins ({len(admins)}):\n'
+                for m in admins[:20]:  # Limit to 20 for brevity
+                    name = m['full_name'].replace('_', ' ')
+                    username = m['username']
+                    response += f'  • @{username} (*{name}*)\n'
+                if len(admins) > 20:
+                    response += f'  ... and {len(admins) - 20} more\n'
+                response += '\n'
+            
+            if members_only:
+                response += f'👤 Members ({len(members_only)}):\n'
+                for m in members_only[:20]:
+                    name = m['full_name'].replace('_', ' ')
+                    username = m['username']
+                    response += f'  • @{username} (*{name}*)\n'
+                if len(members_only) > 20:
+                    response += f'  ... and {len(members_only) - 20} more\n'
+                response += '\n'
+            
+            if kicked:
+                response += f'⚠️ Kicked ({len(kicked)}):\n'
+                for m in kicked[:10]:
+                    name = m['full_name'].replace('_', ' ')
+                    username = m['username']
+                    response += f'  • @{username} (*{name}*)\n'
+                if len(kicked) > 10:
+                    response += f'  ... and {len(kicked) - 10} more\n'
+                response += '\n'
+            
+            # Add bots if any
+            bots = [m for m in members if m['is_bot']]
+            if bots:
+                response += f'🤖 Bots ({len(bots)}):\n'
+                for m in bots[:10]:
+                    name = m['full_name'].replace('_', ' ')
+                    username = m['username']
+                    response += f'  • @{username} (*{name}*)\n'
+                if len(bots) > 10:
+                    response += f'  ... and {len(bots) - 10} more\n'
+                response += '\n'
+            
+            # Send in chunks if too long
+            if len(response) > 4000:
+                # Send first part
+                bot.send_message(chat_id=chat_id, text=response[:4097], parse_mode='Markdown')
+                # Send second part
+                bot.send_message(chat_id=chat_id, text=response[4097:], parse_mode='Markdown')
+            else:
+                bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+            
+        except Exception as ex:
+            logger.error(f"Error getting listmembers: {ex}")
+            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}', parse_mode='Markdown')
         return
