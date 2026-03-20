@@ -49,7 +49,7 @@ class AIWorker:
             self.worker_thread.join(timeout=5)
         logger.info("AI worker stopped")
     
-    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None):
+    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None):
         """
         Submit an AI request to the queue.
         
@@ -59,6 +59,7 @@ class AIWorker:
             query: User's question
             config: AI configuration
             reply_to_message_id: Optional message ID to reply to
+            message_id: Original message ID (to track that we've responded to it)
             
         Returns:
             True if request was queued, False if queue is full
@@ -69,7 +70,8 @@ class AIWorker:
                 'context': context_messages,
                 'query': query,
                 'config': config,
-                'reply_to_message_id': reply_to_message_id
+                'reply_to_message_id': reply_to_message_id,
+                'message_id': message_id
             })
             logger.debug("AI request queued for chat %s", chat_id)
             return True
@@ -92,6 +94,7 @@ class AIWorker:
             query = request['query']
             config = request['config']
             reply_to_message_id = request.get('reply_to_message_id')
+            message_id = request.get('message_id')
             
             # Apply rate limiting
             with self.lock:
@@ -113,15 +116,17 @@ class AIWorker:
             
             # Send response (with reply_to_message_id if set)
             if response_text:
-                self._send_message(chat_id, response_text, reply_to_message_id)
+                self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
-                self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id)
+                self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)
     
-    def _send_message(self, chat_id, text, reply_to_message_id=None):
+    def _send_message(self, chat_id, text, reply_to_message_id=None, message_id=None):
         """Send a message through the bot."""
         if self.bot:
             try:
                 self.bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
+                # Save bot response to chat history and mark message_id as responded_to
+                self._save_bot_response(chat_id, text, message_id)
             except Exception as e:
                 logger.error("Failed to send AI response: %s", e)
     
@@ -136,3 +141,32 @@ class AIWorker:
     def _send_queue_full_message(self, chat_id):
         """Send a message when queue is full."""
         self._send_message(chat_id, "I'm busy processing another request. Please try again in a moment.")
+
+    def _save_bot_response(self, chat_id, text, message_id=None):
+        """
+        Save bot response to chat history and mark message_id as responded_to.
+        
+        Args:
+            chat_id: Telegram chat ID
+            text: Bot's response text
+            message_id: Original message ID (to mark as responded_to)
+        """
+        # Import globvars to access shared state
+        import lib.globvars as globvars_module
+        
+        chat_id_str = str(chat_id)
+        
+        # Save bot response to chat history
+        if chat_id_str in globvars_module.chat_history:
+            msg_record = {
+                'author': 'You',  # Bot
+                'text': text,
+                'timestamp': time.time()
+            }
+            globvars_module.chat_history[chat_id_str].append(msg_record)
+        
+        # Mark message_id as responded_to (to avoid duplicate responses)
+        if message_id is not None:
+            if chat_id_str not in globvars_module.responded_to_message_ids:
+                globvars_module.responded_to_message_ids[chat_id_str] = set()
+            globvars_module.responded_to_message_ids[chat_id_str].add(message_id)

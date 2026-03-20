@@ -36,8 +36,9 @@ conn = lib.conn
 c = lib.c
 config = lib.load_config()
 
-# Initialize per-chat history cache
-globvars.chat_history = {}
+# Initialize per-chat data structures in globvars
+# chat_history and responded_to_message_ids are already initialized in globvars
+
 ai_context_size = config.get('ai_context_size', 50)
 ai_enabled = config.get('ai_enabled', False)
 ai_enable_private = config.get('ai_enable_private', False)
@@ -404,10 +405,20 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     elif ai_enabled:
         # Determine if AI should respond
         should_respond = False
-        
+
+        # Initialize responded_to_message_ids if needed (chat_history already initialized above)
+        if not str(chat_id) in globvars.responded_to_message_ids:
+            globvars.responded_to_message_ids[str(chat_id)] = set()
+
+        # Get current message ID
+        message_id = update.message.message_id
+
+        # Check if we've already responded to this message (avoid duplicates)
+        already_responded = message_id in globvars.responded_to_message_ids[str(chat_id)]
+
         if update.message.chat.type == 'private':
-            # Private chat: respond if ai_enable_private is True
-            should_respond = ai_enable_private
+            # Private chat: respond if ai_enable_private is True and not already responded
+            should_respond = ai_enable_private and not already_responded
         else:
             # Group chat: respond if bot is mentioned in text OR in reply OR replying to bot
             bot_mention = f"@{bot.username}"
@@ -418,7 +429,8 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             # 2. Bot is mentioned in the replied message, OR
             # 3. User is replying directly to a bot message (no mention needed)
             # BUT: Never respond if the message itself is from the bot (avoid self-reply loop)
-            should_respond = user_id != bot.id and (
+            # AND: Never respond if we've already responded to this message
+            should_respond = user_id != bot.id and not already_responded and (
                 bot_mention in text or \
                 (reply_msg and bot_mention in (reply_msg.text or reply_msg.caption or '')) or \
                 (reply_msg and reply_msg.from_user.id == bot.id)
@@ -454,7 +466,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                     reply_to_message_id = None
 
                 # Submit to AI worker (non-blocking)
-                ai_worker_instance.submit(chat_id, context_messages, question, config, reply_to_message_id)
+                ai_worker_instance.submit(chat_id, context_messages, question, config, reply_to_message_id, message_id)
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
