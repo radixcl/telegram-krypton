@@ -416,6 +416,9 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 question = text.strip()
             
             if question:
+                # Show typing indicator while AI is generating response
+                bot.send_chat_action(chat_id=chat_id, action='typing')
+                
                 # Get chat context
                 chat_history = globvars.chat_history.get(str(chat_id), [])
                 context_messages = ai.build_context(chat_history, ai_context_size)
