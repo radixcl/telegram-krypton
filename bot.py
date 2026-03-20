@@ -411,9 +411,11 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         else:
             # Group chat: respond if bot is mentioned in text OR in reply
             bot_mention = f"@{bot.username}"
+            # Use reply_to_message for Python 3.6/older telegram library
+            reply_msg = getattr(update.message, 'reply_to_message', getattr(update.message, 'reply_message', None))
             should_respond = bot_mention in text or \
-                (update.message.reply_message and bot_mention in update.message.reply_message.text) or \
-                (update.message.reply_message and update.message.reply_message.from_user.id == bot.id)
+                (reply_msg and bot_mention in (reply_msg.text or reply_msg.caption or '')) or \
+                (reply_msg and reply_msg.from_user.id == bot.id)
         
         if should_respond:
             # Extract question (remove bot mention if present)
@@ -429,15 +431,15 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 context_messages = ai.build_context(chat_history, ai_context_size)
                 
                 # If replying to bot message, add that message to context for better relevance
-                if update.message.reply_message and update.message.reply_message.from_user.id == bot.id:
-                    reply_msg = {
+                if reply_msg and reply_msg.from_user.id == bot.id:
+                    context_msg = {
                         'author': 'You',  # Bot
-                        'text': update.message.reply_message.text or update.message.reply_message.caption or ''
+                        'text': reply_msg.text or reply_msg.caption or ''
                     }
                     # Insert reply message at the beginning of context
-                    context_messages.insert(0, reply_msg)
+                    context_messages.insert(0, context_msg)
                     # Pass message_id so bot replies to the original message
-                    reply_to_message_id = update.message.reply_message.message_id
+                    reply_to_message_id = reply_msg.message_id
                 else:
                     reply_to_message_id = None
                 
