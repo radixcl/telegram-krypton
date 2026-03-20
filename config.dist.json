@@ -7,5 +7,6 @@
     "ai_model_id": "nvidia/nemotron-3-super-120b-a12b:free",
     "ai_api_key": "your-openrouter-api-key",
     "ai_context_size": 50,
-    "ai_enabled": true
+    "ai_enabled": true,
+    "ai_system_prompt": "You are a helpful AI assistant participating in a Telegram chat. Answer questions based on the conversation context. Keep responses concise, friendly, and relevant to the chat flow."
 }

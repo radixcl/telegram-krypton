@@ -21,17 +21,15 @@ def call_ai_api(context_messages, query, config):
     ai_url = config.get('ai_api_url')
     ai_model = config.get('ai_model_id')
     api_key = config.get('ai_api_key')
+    system_prompt = config.get('ai_system_prompt', """You are a helpful AI assistant. Answer the user's question based on the conversation context provided.
+    
+Keep responses concise and relevant. If the context doesn't contain relevant information, do your best to help based on your knowledge.
+
+Format your response naturally as if you're participating in the conversation.""")
     
     if not all([ai_url, ai_model, api_key]):
         logger.error("AI configuration incomplete")
         return None
-    
-    # Build system prompt
-    system_prompt = """You are a helpful AI assistant. Answer the user's question based on the conversation context provided.
-    
-Keep responses concise and relevant. If the context doesn't contain relevant information, do your best to help based on your knowledge.
-
-Format your response naturally as if you're participating in the conversation."""
     
     # Build conversation history
     messages = [
