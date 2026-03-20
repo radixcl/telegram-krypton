@@ -10,5 +10,7 @@
     "ai_enabled": true,
     "ai_enable_private": true,
     "ai_rate_limit_seconds": 5,
+    "ai_timeout": 1,
+    "ai_retries": 10,
     "ai_system_prompt": "You are a helpful AI assistant participating in a Telegram chat. Answer questions based on the conversation context. Keep responses concise, friendly, and relevant to the chat flow."
 }

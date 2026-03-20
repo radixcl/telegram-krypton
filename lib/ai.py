@@ -3,18 +3,19 @@
 
 import requests
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 
 def call_ai_api(context_messages, query, config):
     """
     Call OpenAI-compatible API with chat context.
-    
+
     Args:
         context_messages: List of dicts with 'author', 'text', 'timestamp'
         query: The user's question/message
         config: AI configuration (url, model_id, api_key, context_size)
-    
+
     Returns:
         AI response text or None on error
     """
@@ -22,20 +23,24 @@ def call_ai_api(context_messages, query, config):
     ai_model = config.get('ai_model_id')
     api_key = config.get('ai_api_key')
     system_prompt = config.get('ai_system_prompt', """You are a helpful AI assistant. Answer the user's question based on the conversation context provided.
-    
+
 Keep responses concise and relevant. If the context doesn't contain relevant information, do your best to help based on your knowledge.
 
 Format your response naturally as if you're participating in the conversation.""")
     
+    # Get retry and timeout configuration
+    ai_timeout = config.get('ai_timeout', 1)  # Default: 1 second
+    ai_retries = config.get('ai_retries', 10)  # Default: 10 retries
+
     if not all([ai_url, ai_model, api_key]):
         logger.error("AI configuration incomplete")
         return None
-    
+
     # Build conversation history
     messages = [
         {"role": "system", "content": system_prompt}
     ]
-    
+
     # Add context messages (last N messages)
     for msg in context_messages:
         role = "user" if msg.get('author') != "You" else "assistant"
@@ -43,10 +48,10 @@ Format your response naturally as if you're participating in the conversation.""
             "role": role,
             "content": f"{msg['author']}: {msg['text']}"
         })
-    
+
     # Add the current query
     messages.append({"role": "user", "content": query})
-    
+
     # Build headers (OpenRouter requires additional headers)
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -54,36 +59,51 @@ Format your response naturally as if you're participating in the conversation.""
         "HTTP-Referer": "http://localhost",
         "X-Title": "Telegram Bot"
     }
-    
-    try:
-        response = requests.post(
-            ai_url,
-            headers=headers,
-            json={
-                "model": ai_model,
-                "messages": messages,
-                "max_tokens": 512,
-                "temperature": 0.7
-            },
-            timeout=60
-        )
-        
-        response.raise_for_status()
-        result = response.json()
-        
-        # Extract content from response
-        if 'choices' in result and len(result['choices']) > 0:
-            return result['choices'][0]['message']['content']
-        else:
-            logger.error(f"Unexpected AI response format: {result}")
+
+    # Retry loop with short timeout
+    for attempt in range(ai_retries + 1):
+        try:
+            logger.debug("AI API request attempt %d/%d", attempt + 1, ai_retries + 1)
+            response = requests.post(
+                ai_url,
+                headers=headers,
+                json={
+                    "model": ai_model,
+                    "messages": messages,
+                    "max_tokens": 512,
+                    "temperature": 0.7
+                },
+                timeout=ai_timeout
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Extract content from response
+            if 'choices' in result and len(result['choices']) > 0:
+                return result['choices'][0]['message']['content']
+            else:
+                logger.error(f"Unexpected AI response format: {result}")
+                return None
+
+        except requests.exceptions.Timeout:
+            logger.warning("AI API request timed out (%ds)", ai_timeout)
+            if attempt < ai_retries:
+                logger.info("Retrying... (%d/%d)", attempt + 1, ai_retries)
+                time.sleep(1)  # Brief pause before retry
+                continue
+            else:
+                logger.error("AI API request failed after %d retries (timeout)", ai_retries)
+                return None
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"AI API request failed: {e}")
             return None
-            
-    except requests.exceptions.RequestException as e:
-        logger.error(f"AI API request failed: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"AI API error: {e}")
-        return None
+        except Exception as e:
+            logger.error(f"AI API error: {e}")
+            return None
+    
+    return None
 
 def build_context(messages_list, context_size=50):
     """
