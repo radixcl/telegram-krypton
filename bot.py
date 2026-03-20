@@ -409,13 +409,20 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             # Private chat: respond if ai_enable_private is True
             should_respond = ai_enable_private
         else:
-            # Group chat: respond if bot is mentioned in text OR in reply
+            # Group chat: respond if bot is mentioned in text OR in reply OR replying to bot
             bot_mention = f"@{bot.username}"
             # Use reply_to_message for Python 3.6/older telegram library
             reply_msg = getattr(update.message, 'reply_to_message', getattr(update.message, 'reply_message', None))
-            should_respond = bot_mention in text or \
+            # Should respond if:
+            # 1. Bot is mentioned in the message text, OR
+            # 2. Bot is mentioned in the replied message, OR
+            # 3. User is replying directly to a bot message (no mention needed)
+            # BUT: Never respond if the message itself is from the bot (avoid self-reply loop)
+            should_respond = user_id != bot.id and (
+                bot_mention in text or \
                 (reply_msg and bot_mention in (reply_msg.text or reply_msg.caption or '')) or \
                 (reply_msg and reply_msg.from_user.id == bot.id)
+            )
         
         if should_respond:
             # Extract question (remove bot mention if present)
@@ -429,7 +436,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 # Get chat context
                 chat_history = globvars.chat_history.get(str(chat_id), [])
                 context_messages = ai.build_context(chat_history, ai_context_size)
-                
+
                 # If replying to bot message, add that message to context for better relevance
                 if reply_msg and reply_msg.from_user.id == bot.id:
                     context_msg = {
@@ -438,11 +445,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                     }
                     # Insert reply message at the beginning of context
                     context_messages.insert(0, context_msg)
-                    # Pass message_id so bot replies to the original message
+                    # Pass message_id so bot replies to the USER's message (not the bot's)
+                    reply_to_message_id = update.message.message_id
+                elif reply_msg:
+                    # Reply to any message (not from bot)
                     reply_to_message_id = reply_msg.message_id
                 else:
                     reply_to_message_id = None
-                
+
                 # Submit to AI worker (non-blocking)
                 ai_worker_instance.submit(chat_id, context_messages, question, config, reply_to_message_id)
 
