@@ -505,6 +505,7 @@ def main():
     dp.add_handler(CommandHandler("kick", bot_commands.proc_command))
     dp.add_handler(CommandHandler("op", bot_commands.proc_command))
     dp.add_handler(CommandHandler("deop", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("listmembers", bot_commands.proc_command))
 
     # text message handler
     dp.add_handler(MessageHandler(Filters.all, proc_message))
