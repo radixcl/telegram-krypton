@@ -261,7 +261,7 @@ def proc_command(update: Update, context: CallbackContext) -> None:
 
     elif command == '/listmembers' and lib.is_admin(username):
         if not params:
-            bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>', parse_mode='Markdown')
+            bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>')
             return
         
         group_name = params[0]
@@ -277,14 +277,14 @@ def proc_command(update: Update, context: CallbackContext) -> None:
                     })
             
             if not chats:
-                bot.send_message(chat_id=chat_id, text=f'No chats found with name "*{group_name}*"', parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text=f'No chats found with name <b>{group_name}</b>')
                 return
             
             if len(chats) > 1:
-                bot.send_message(chat_id=chat_id, text=f'Found {len(chats)} matching chats:\n\n', parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text=f'Found {len(chats)} matching chats:\n\n')
                 for i, c in enumerate(chats, 1):
-                    bot.send_message(chat_id=chat_id, text=f'{i}. *{c["chat_id"]}*: {c["chat_title"]}', parse_mode='Markdown')
-                bot.send_message(chat_id=chat_id, text='\nPlease specify the exact chat_id or use one of the numbers above.', parse_mode='Markdown')
+                    bot.send_message(chat_id=chat_id, text=f'{i}. <b>{c["chat_id"]}</b>: {c["chat_title"]}')
+                bot.send_message(chat_id=chat_id, text='\nPlease specify the exact chat_id or use one of the numbers above.')
                 return
             
             chat_id = chats[0]['chat_id']
@@ -292,9 +292,9 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             # Get members
             members = get_chat_members(bot, chat_id)
             
-            # Format response
-            response = f'📋 Members of *{chat_title}*\n'
-            response += f'👥 Total: *{len(members)}* members\n\n'
+            # Format response using HTML mode (emojis work better with HTML)
+            response = f'<b>Members of {chat_title}</b>\n'
+            response += f'<b>Total:</b> {len(members)} members\n\n'
             
             # Separate by type
             admins = [m for m in members if m['is_admin'] and not m['is_bot'] and not m['is_outside']]
@@ -302,31 +302,31 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             kicked = [m for m in members if m['is_outside'] and not m['is_bot']]
             
             if admins:
-                response += f'👑 Admins ({len(admins)}):\n'
+                response += f'<b>Admins ({len(admins)}):</b>\n'
                 for m in admins[:20]:  # Limit to 20 for brevity
                     name = m['full_name'].replace('_', ' ')
                     username = m['username']
-                    response += f'  • @{username} (*{name}*)\n'
+                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
                 if len(admins) > 20:
                     response += f'  ... and {len(admins) - 20} more\n'
                 response += '\n'
             
             if members_only:
-                response += f'👤 Members ({len(members_only)}):\n'
+                response += f'<b>Members ({len(members_only)}):</b>\n'
                 for m in members_only[:20]:
                     name = m['full_name'].replace('_', ' ')
                     username = m['username']
-                    response += f'  • @{username} (*{name}*)\n'
+                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
                 if len(members_only) > 20:
                     response += f'  ... and {len(members_only) - 20} more\n'
                 response += '\n'
             
             if kicked:
-                response += f'⚠️ Kicked ({len(kicked)}):\n'
+                response += f'<b>Kicked ({len(kicked)}):</b>\n'
                 for m in kicked[:10]:
                     name = m['full_name'].replace('_', ' ')
                     username = m['username']
-                    response += f'  • @{username} (*{name}*)\n'
+                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
                 if len(kicked) > 10:
                     response += f'  ... and {len(kicked) - 10} more\n'
                 response += '\n'
@@ -334,11 +334,11 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             # Add bots if any
             bots = [m for m in members if m['is_bot']]
             if bots:
-                response += f'🤖 Bots ({len(bots)}):\n'
+                response += f'<b>Bots ({len(bots)}):</b>\n'
                 for m in bots[:10]:
                     name = m['full_name'].replace('_', ' ')
                     username = m['username']
-                    response += f'  • @{username} (*{name}*)\n'
+                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
                 if len(bots) > 10:
                     response += f'  ... and {len(bots) - 10} more\n'
                 response += '\n'
@@ -346,13 +346,13 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             # Send in chunks if too long
             if len(response) > 4000:
                 # Send first part
-                bot.send_message(chat_id=chat_id, text=response[:4097], parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text=response[:4097], parse_mode='HTML')
                 # Send second part
-                bot.send_message(chat_id=chat_id, text=response[4097:], parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text=response[4097:], parse_mode='HTML')
             else:
-                bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+                bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
             
         except Exception as ex:
             logger.error(f"Error getting listmembers: {ex}")
-            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}', parse_mode='Markdown')
+            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}')
         return
