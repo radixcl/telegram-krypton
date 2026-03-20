@@ -416,14 +416,15 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         # Check if we've already responded to this message (avoid duplicates)
         already_responded = message_id in globvars.responded_to_message_ids[str(chat_id)]
 
+        # Use reply_to_message for Python 3.6/older telegram library (defined for both private and group)
+        reply_msg = getattr(update.message, 'reply_to_message', getattr(update.message, 'reply_message', None))
+
         if update.message.chat.type == 'private':
             # Private chat: respond if ai_enable_private is True and not already responded
             should_respond = ai_enable_private and not already_responded
         else:
             # Group chat: respond if bot is mentioned in text OR in reply OR replying to bot
             bot_mention = f"@{bot.username}"
-            # Use reply_to_message for Python 3.6/older telegram library
-            reply_msg = getattr(update.message, 'reply_to_message', getattr(update.message, 'reply_message', None))
             # Should respond if:
             # 1. Bot is mentioned in the message text, OR
             # 2. Bot is mentioned in the replied message, OR
