@@ -39,6 +39,7 @@ config = lib.load_config()
 globvars.chat_history = {}
 ai_context_size = config.get('ai_context_size', 50)
 ai_enabled = config.get('ai_enabled', False)
+ai_enable_private = config.get('ai_enable_private', False)
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -394,24 +395,38 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         response = 'Matched %s key(s): %s' % (total, results)
         bot.send_message(chat_id=chat_id, text=response)
 
-    # AI mention handler (when bot is mentioned with @botname)
-    elif ai_enabled and bot.username in text:
-        # Extract the question (remove bot mention from text)
-        bot_mention = f"@{bot.username}"
-        question = text.replace(bot_mention, '').strip()
+    # AI handler (groups: mention required, private: auto if enabled)
+    elif ai_enabled:
+        # Determine if AI should respond
+        should_respond = False
         
-        if question:
-            # Get chat context
-            chat_history = globvars.chat_history.get(str(chat_id), [])
-            context_messages = ai.build_context(chat_history, ai_context_size)
-            
-            # Call AI API
-            response_text = ai.call_ai_api(context_messages, question, config)
-            
-            if response_text:
-                bot.send_message(chat_id=chat_id, text=response_text)
+        if update.message.chat.type == 'private':
+            # Private chat: respond if ai_enable_private is True
+            should_respond = ai_enable_private
+        else:
+            # Group chat: respond only if bot is mentioned
+            should_respond = bot.username in text
+        
+        if should_respond:
+            # Extract question (remove bot mention if present)
+            bot_mention = f"@{bot.username}"
+            if bot_mention in text:
+                question = text.replace(bot_mention, '').strip()
             else:
-                bot.send_message(chat_id=chat_id, text=f"Sorry, I couldn't process that request.")
+                question = text.strip()
+            
+            if question:
+                # Get chat context
+                chat_history = globvars.chat_history.get(str(chat_id), [])
+                context_messages = ai.build_context(chat_history, ai_context_size)
+                
+                # Call AI API
+                response_text = ai.call_ai_api(context_messages, question, config)
+                
+                if response_text:
+                    bot.send_message(chat_id=chat_id, text=response_text)
+                else:
+                    bot.send_message(chat_id=chat_id, text=f"Sorry, I couldn't process that request.")
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""

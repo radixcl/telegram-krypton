@@ -8,6 +8,7 @@
     "ai_api_key": "YOUR_OPENROUTER_API_KEY",
     "ai_context_size": 50,
     "ai_enabled": true,
+    "ai_enable_private": true,  # Enable AI responses in private chats (false = groups only)
     "ai_system_prompt": "You are a helpful AI assistant in a Telegram chat. Answer questions based on the conversation context. Keep responses concise, friendly, and relevant to the chat flow.",
     "groups_name_track": {},
     "groups_member_track": {},
