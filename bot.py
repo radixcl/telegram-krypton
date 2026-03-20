@@ -436,9 +436,13 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                     }
                     # Insert reply message at the beginning of context
                     context_messages.insert(0, reply_msg)
+                    # Pass message_id so bot replies to the original message
+                    reply_to_message_id = update.message.reply_message.message_id
+                else:
+                    reply_to_message_id = None
                 
                 # Submit to AI worker (non-blocking)
-                ai_worker_instance.submit(chat_id, context_messages, question, config)
+                ai_worker_instance.submit(chat_id, context_messages, question, config, reply_to_message_id)
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""

@@ -49,7 +49,7 @@ class AIWorker:
             self.worker_thread.join(timeout=5)
         logger.info("AI worker stopped")
     
-    def submit(self, chat_id, context_messages, query, config):
+    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None):
         """
         Submit an AI request to the queue.
         
@@ -58,6 +58,7 @@ class AIWorker:
             context_messages: List of context messages
             query: User's question
             config: AI configuration
+            reply_to_message_id: Optional message ID to reply to
             
         Returns:
             True if request was queued, False if queue is full
@@ -67,7 +68,8 @@ class AIWorker:
                 'chat_id': chat_id,
                 'context': context_messages,
                 'query': query,
-                'config': config
+                'config': config,
+                'reply_to_message_id': reply_to_message_id
             })
             logger.debug("AI request queued for chat %s", chat_id)
             return True
@@ -89,6 +91,7 @@ class AIWorker:
             context_messages = request['context']
             query = request['query']
             config = request['config']
+            reply_to_message_id = request.get('reply_to_message_id')
             
             # Apply rate limiting
             with self.lock:
@@ -108,17 +111,17 @@ class AIWorker:
             # Call AI API
             response_text = ai_module.call_ai_api(context_messages, query, config)
             
-            # Send response
+            # Send response (with reply_to_message_id if set)
             if response_text:
-                self._send_message(chat_id, response_text)
+                self._send_message(chat_id, response_text, reply_to_message_id)
             else:
-                self._send_message(chat_id, "Sorry, I couldn't process that request.")
+                self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id)
     
-    def _send_message(self, chat_id, text):
+    def _send_message(self, chat_id, text, reply_to_message_id=None):
         """Send a message through the bot."""
         if self.bot:
             try:
-                self.bot.send_message(chat_id=chat_id, text=text)
+                self.bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
             except Exception as e:
                 logger.error("Failed to send AI response: %s", e)
     
