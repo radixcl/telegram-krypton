@@ -412,7 +412,8 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             # Group chat: respond if bot is mentioned in text OR in reply
             bot_mention = f"@{bot.username}"
             should_respond = bot_mention in text or \
-                (update.message.reply_message and bot_mention in update.message.reply_message.text)
+                (update.message.reply_message and bot_mention in update.message.reply_message.text) or \
+                (update.message.reply_message and update.message.reply_message.from_user.id == bot.id)
         
         if should_respond:
             # Extract question (remove bot mention if present)
@@ -426,6 +427,15 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 # Get chat context
                 chat_history = globvars.chat_history.get(str(chat_id), [])
                 context_messages = ai.build_context(chat_history, ai_context_size)
+                
+                # If replying to bot message, add that message to context for better relevance
+                if update.message.reply_message and update.message.reply_message.from_user.id == bot.id:
+                    reply_msg = {
+                        'author': 'You',  # Bot
+                        'text': update.message.reply_message.text or update.message.reply_message.caption or ''
+                    }
+                    # Insert reply message at the beginning of context
+                    context_messages.insert(0, reply_msg)
                 
                 # Submit to AI worker (non-blocking)
                 ai_worker_instance.submit(chat_id, context_messages, question, config)
