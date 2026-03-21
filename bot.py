@@ -534,6 +534,8 @@ def main():
     
     # Extract AI settings from config
     ai_context_size = config.get('ai_context_size', 50)
+    ai_enabled = config.get('ai_enabled', False)
+    ai_enable_private = config.get('ai_enable_private', False)
     ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
     
     lib.open_db()
