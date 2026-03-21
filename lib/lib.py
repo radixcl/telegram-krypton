@@ -29,6 +29,7 @@ def load_config():
 
 # save config to json file
 def save_config(cfg):
+    from lib import globvars
     cfg['groups_name_track'] = globvars.groups_name_track
     cfg['groups_member_track'] = globvars.groups_member_track
     cfg['users_track'] = globvars.users_track

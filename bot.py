@@ -79,6 +79,9 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         # Get ai_context_size from loaded config
         ai_context_size = globvars.config.get('ai_context_size', 50) if globvars.config else 50
         globvars.chat_history[str(chat_id)] = deque(maxlen=ai_context_size)
+    else:
+        # ai_context_size already defined from previous messages
+        ai_context_size = 50
     
     if text and text.strip():
         msg_record = {
@@ -449,6 +452,9 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             if question:
                 # Get chat context
                 chat_history = globvars.chat_history.get(str(chat_id), [])
+                # Ensure ai_context_size is defined
+                if not hasattr(globvars, 'ai_context_size'):
+                    ai_context_size = 50
                 context_messages = ai.build_context(chat_history, ai_context_size)
 
                 # If replying to bot message, add that message to context for better relevance
