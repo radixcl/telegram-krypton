@@ -24,14 +24,6 @@ from lib import globvars
 # Initialize per-chat data structures in globvars
 # chat_history and responded_to_message_ids are already initialized in globvars
 
-ai_context_size = config.get('ai_context_size', 50)
-ai_enabled = config.get('ai_enabled', False)
-ai_enable_private = config.get('ai_enable_private', False)
-ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
-
-# Initialize AI worker
-ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
-
 def proc_message(update: Update, context: CallbackContext) -> None:
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
@@ -479,15 +471,22 @@ def main():
     globvars.config_file = args.config if hasattr(args, 'config') and args.config else './config.json'
     config = lib.load_config()
     
+    # Extract AI settings from config
+    ai_context_size = config.get('ai_context_size', 50)
+    ai_enabled = config.get('ai_enabled', False)
+    ai_enable_private = config.get('ai_enable_private', False)
+    ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
+    
     lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
 
+    # Initialize AI worker if enabled
+    if ai_enabled:
+        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
+        ai_worker_instance.start(updater.bot)
+    
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
     dp = updater.dispatcher
-    
-    # Start AI worker if AI is enabled
-    if ai_enabled:
-        ai_worker_instance.start(updater.bot)
 
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))
@@ -517,6 +516,9 @@ def main():
     updater.start_polling()
     updater.idle()
 
+
+# Global config (loaded in main())
+config = None
 
 if __name__ == '__main__':
     main()
