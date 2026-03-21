@@ -128,6 +128,16 @@ class AIWorker:
         """Send a message through the bot."""
         if self.bot:
             try:
+                # Ensure text is not wrapped in code formatting that would escape Markdown
+                # Remove any accidental code block wrapping
+                if text.startswith('`') and text.endswith('`'):
+                    text = text[1:-1].strip()
+                
+                # Ensure text has proper newlines for Markdown parsing
+                # Telegram requires \n between block elements
+                import re
+                text = re.sub(r'\n+', '\n\n', text)
+                
                 self.bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
                 # Save bot response to chat history and mark message_id as responded_to
                 self._save_bot_response(chat_id, text, message_id)
