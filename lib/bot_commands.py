@@ -65,10 +65,10 @@ def get_chat_members(bot, chat_id, limit=None):
 def proc_command(update: Update, context: CallbackContext) -> None:
     global config
     bot = context.bot
-    chat_id = update.message.chat.id
-    chat_title = update.message.chat.title
-    chat_type = update.message.chat.type
-    text = update.message.text
+    chat_id = update.effective_chat.id
+    chat_title = update.effective_chat.title
+    chat_type = update.effective_chat.type
+    text = update.effective_message.text
     if update.message.from_user.username is not None:
         username = update.message.from_user.username
     else:
