@@ -33,8 +33,8 @@ def save_config(cfg):
     with open(globvars.config_file, 'w') as f:
         json.dump(cfg, f, indent=4)
 
-config = load_config()
-
+# Config and connection initialized in bot.py main()
+config = None
 c = None
 conn = None
 

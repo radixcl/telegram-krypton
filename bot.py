@@ -14,6 +14,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 
 from lib import globvars
 from lib import lib
+from lib import ai_worker
 
 import sys
 import logging
@@ -484,13 +485,14 @@ def main():
     lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
 
+    
+    updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
+    dp = updater.dispatcher
+
     # Initialize AI worker if enabled
     if ai_enabled:
         ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
         ai_worker_instance.start(updater.bot)
-    
-    updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
-    dp = updater.dispatcher
 
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))

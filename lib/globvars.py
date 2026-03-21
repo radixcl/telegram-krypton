@@ -1,6 +1,7 @@
 # Global variables
 
-config_file = './config.json'
+# config_file will be set in main() from command line args
+config_file = None
 
 groups_name_track = {}
 groups_member_track = {}
