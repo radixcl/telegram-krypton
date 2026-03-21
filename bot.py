@@ -52,9 +52,6 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     if not hasattr(globvars, 'config') or globvars.config is None:
         globvars.config = lib.load_config()
 
-    # Get ai_enabled and ai_enable_private from loaded config
-    ai_enabled = globvars.config.get('ai_enabled', False) if globvars.config else False
-    ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
     
 
     if user.username is not None:
