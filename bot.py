@@ -45,9 +45,6 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     from lib import ai_worker
     from lib import ai
 
-    # Initialize AI worker instance (will be used if AI is enabled)
-    ai_worker_instance = None
-
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
     user = update.effective_user
@@ -475,7 +472,13 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                     reply_to_message_id = None
 
                 # Submit to AI worker (non-blocking)
-                ai_worker_instance.submit(chat_id, context_messages, question, globvars.config, reply_to_message_id, message_id)
+                # Check if worker is initialized to avoid AttributeError
+                if ai_worker_instance:
+                    ai_worker_instance.submit(chat_id, context_messages, question, globvars.config, reply_to_message_id, message_id)
+                else:
+                    # Log warning if worker is None
+                    if globvars.config and globvars.config.get('ai_enabled', False):
+                        logger.warning("AI worker not initialized despite ai_enabled=True")
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
