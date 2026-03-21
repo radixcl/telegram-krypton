@@ -55,14 +55,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     # Get ai_enabled and ai_enable_private from loaded config
     ai_enabled = globvars.config.get('ai_enabled', False) if globvars.config else False
     ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
-
-    # Initialize AI worker instance if enabled
-    # Get verbose from config (use global verbose flag if available)
-    ai_verbose = globvars.config.get('ai_verbose', args.verbose) if globvars.config else args.verbose
     
-    if ai_enabled and ai_worker_instance is None:
-        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=5, verbose=ai_verbose)
-        ai_worker_instance.start(bot)
 
     if user.username is not None:
         username = user.username
@@ -550,7 +543,7 @@ def main():
 
     # Initialize AI worker if enabled
     if ai_enabled:
-        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
+        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit, verbose=ai_verbose)
         ai_worker_instance.start(updater.bot)
 
     # on different commands - answer in Telegram
