@@ -20,22 +20,6 @@ import shlex
 import pickle
 
 from lib import globvars
-try:
-    globvars.config_file = sys.argv[1]
-except:
-    globvars.config_file = './config.json'
-
-from lib import lib
-from lib import bot_commands
-from lib import ai
-from lib import ai_worker
-
-import pprint
-from collections import deque
-
-conn = lib.conn
-c = lib.c
-config = lib.load_config()
 
 # Initialize per-chat data structures in globvars
 # chat_history and responded_to_message_ids are already initialized in globvars
@@ -478,6 +462,8 @@ def main():
     parser = argparse.ArgumentParser(description='Krypton Telegram Bot')
     parser.add_argument('-v', '--verbose', action='store_true', 
                         help='Enable verbose/debug logging')
+    parser.add_argument('--config', '-c', type=str, default='config.json',
+                        help='Path to config file (default: config.json)')
     args = parser.parse_args()
     
     # Set logging level based on verbose flag
@@ -488,6 +474,10 @@ def main():
                         level=log_level)
     
     logger = logging.getLogger(__name__)
+    
+    # Load config file (either from command line arg or default)
+    globvars.config_file = args.config if hasattr(args, 'config') and args.config else './config.json'
+    config = lib.load_config()
     
     lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
