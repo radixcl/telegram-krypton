@@ -15,6 +15,7 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 from lib import globvars
 from lib import lib
 from lib import ai_worker
+from lib import bot_commands
 
 import sys
 import logging
