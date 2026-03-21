@@ -12,13 +12,14 @@ logger = logging.getLogger(__name__)
 class AIWorker:
     """Background worker that processes AI requests with rate limiting."""
 
-    def __init__(self, rate_limit_seconds=5, queue_maxsize=10):
+    def __init__(self, rate_limit_seconds=5, queue_maxsize=10, verbose=False):
         """
         Initialize AI worker.
 
         Args:
             rate_limit_seconds: Minimum seconds between AI API calls
             queue_maxsize: Maximum queue size (backpressure)
+            verbose: Enable verbose/debug logging
         """
         self.rate_limit = rate_limit_seconds
         self.queue = queue.Queue(maxsize=queue_maxsize)
@@ -27,6 +28,7 @@ class AIWorker:
         self.worker_thread = None
         self.running = False
         self.bot = None
+        self.verbose = verbose
 
     def start(self, bot_instance):
         """Start the background worker thread."""
@@ -73,7 +75,11 @@ class AIWorker:
                 'reply_to_message_id': reply_to_message_id,
                 'message_id': message_id
             })
+            # Log context in debug mode
             logger.debug("AI request queued for chat %s", chat_id)
+            if verbose:
+                logger.debug("AI CONTEXT: chat_id=%s, query=%s", chat_id, query[:100] if query else None)
+                logger.debug("AI CONTEXT: messages=%s", context_messages[-5:] if len(context_messages) > 5 else context_messages)
             return True
         except queue.Full:
             logger.warning("AI queue is full, request dropped for chat %s", chat_id)
@@ -108,6 +114,18 @@ class AIWorker:
             # Import ai module here to avoid circular imports
             import lib.ai as ai_module
 
+            # Log context before API call (in verbose mode)
+            if self.verbose:
+                logger.debug("="*60)
+                logger.debug("AI API CALL:")
+                logger.debug("  chat_id: %s", chat_id)
+                logger.debug("  query: %s", query[:200] if query else None)
+                logger.debug("  context messages (last 10):")
+                for i, msg in enumerate(context_messages[-10:] if len(context_messages) > 10 else context_messages):
+                    logger.debug("    [%d] %s: %s", i, msg.get('author', 'unknown'), msg.get('text', '')[:100])
+                logger.debug("  config: %s", config.get('ai_model_id', 'N/A'))
+                logger.debug("="*60)
+
             # Call AI API
             response_text = ai_module.call_ai_api(context_messages, query, config)
 
@@ -126,37 +144,40 @@ class AIWorker:
 
     def _send_message(self, chat_id, text, reply_to_message_id=None, message_id=None):
         """Send a message through the bot."""
-        if self.bot:
-            try:
-                # DEBUG: Log the text before processing
-                logger.debug(f"SENDING MESSAGE (chat_id={chat_id}, reply_to={reply_to_message_id}):")
-                logger.debug(f"  Original text (repr): {repr(text[:200])}...")
-                
-                # Ensure text is not wrapped in code formatting that would escape Markdown
-                # Remove any accidental code block wrapping
-                if text.startswith('`') and text.endswith('`'):
-                    text = text[1:-1].strip()
-                    logger.debug(f"  Removed code block wrapping")
-                
-                # Ensure text has proper newlines for Markdown parsing
-                # Telegram requires \n between block elements
-                import re
-                text = re.sub(r'\n+', '\n\n', text)
-                
-                logger.debug(f"  Final text (repr): {repr(text[:200])}...")
-                
-                # Send message with explicit Markdown parse mode
-                # Telegram needs this to render Markdown formatting
-                self.bot.send_message(
-                    chat_id=chat_id, 
-                    text=text, 
-                    reply_to_message_id=reply_to_message_id,
-                    parse_mode='Markdown'
-                )
-                # Save bot response to chat history and mark message_id as responded_to
-                self._save_bot_response(chat_id, text, message_id)
-            except Exception as e:
-                logger.error("Failed to send AI response: %s", e)
+        if not self.bot:
+            logger.error("self.bot == FALSE!")
+            return False
+        
+        try:
+            # DEBUG: Log the text before processing
+            logger.debug(f"SENDING MESSAGE (chat_id={chat_id}, reply_to={reply_to_message_id}):")
+            logger.debug(f"  Original text (repr): {repr(text[:200])}...")
+            
+            # Ensure text is not wrapped in code formatting that would escape Markdown
+            # Remove any accidental code block wrapping
+            if text.startswith('`') and text.endswith('`'):
+                text = text[1:-1].strip()
+                logger.debug(f"  Removed code block wrapping")
+            
+            # Ensure text has proper newlines for Markdown parsing
+            # Telegram requires \n between block elements
+            import re
+            text = re.sub(r'\n+', '\n\n', text)
+            
+            logger.debug(f"  Final text (repr): {repr(text[:200])}...")
+            
+            # Send message with explicit Markdown parse mode
+            # Telegram needs this to render Markdown formatting
+            self.bot.send_message(
+                chat_id=chat_id, 
+                text=text, 
+                reply_to_message_id=reply_to_message_id,
+                parse_mode='Markdown'
+            )
+            # Save bot response to chat history and mark message_id as responded_to
+            self._save_bot_response(chat_id, text, message_id)
+        except Exception as e:
+            logger.error("Failed to send AI response: %s", e)
 
     def _send_chat_action(self, chat_id, action):
         """Send a chat action (typing, etc.) through the bot."""

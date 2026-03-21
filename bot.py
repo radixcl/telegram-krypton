@@ -57,9 +57,12 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
 
     # Initialize AI worker instance if enabled
+    # Get verbose from config (use global verbose flag if available)
+    ai_verbose = globvars.config.get('ai_verbose', args.verbose) if globvars.config else args.verbose
+    
     if ai_enabled and ai_worker_instance is None:
-        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=5)
-        ai_worker_instance.start(context.bot)
+        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=5, verbose=ai_verbose)
+        ai_worker_instance.start(bot)
 
     if user.username is not None:
         username = user.username
