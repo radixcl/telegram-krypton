@@ -259,7 +259,7 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             bot.send_message(chat_id=chat_id, text=str(ex), parse_mode='Markdown')
         return
 
-    elif command == '/listmembers' and lib.is_admin(username):
+    elif command == '/listmembers' and lib.is_admin(username) and chat_type == 'private':
         if not params:
             bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>')
             return
@@ -287,10 +287,10 @@ def proc_command(update: Update, context: CallbackContext) -> None:
                 bot.send_message(chat_id=chat_id, text='\nPlease specify the exact chat_id or use one of the numbers above.')
                 return
             
-            chat_id = chats[0]['chat_id']
+            target_chat_id = chats[0]['chat_id']
             
             # Get members
-            members = get_chat_members(bot, chat_id)
+            members = get_chat_members(bot, target_chat_id)
             
             # Format response using HTML mode (emojis work better with HTML)
             response = f'<b>Members of {chat_title}</b>\n'
