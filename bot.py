@@ -35,14 +35,11 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     from lib import globvars
     from lib import lib
     from lib import ai_worker
+    from lib import ai
 
-    # Load config if not already loaded
-    if globvars.config is None:
-        globvars.config = lib.load_config()
-    
-    # Get ai_context_size from loaded config
-    ai_context_size = globvars.config.get('ai_context_size', 50)
-    
+    # Initialize AI worker instance (will be used if AI is enabled)
+    ai_worker_instance = None
+
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
     user = update.effective_user
@@ -50,6 +47,19 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     bot = context.bot
     text = update.message.text
     verbose = False
+
+    # Load config if not already loaded
+    if not hasattr(globvars, 'config') or globvars.config is None:
+        globvars.config = lib.load_config()
+
+    # Get ai_enabled and ai_enable_private from loaded config
+    ai_enabled = globvars.config.get('ai_enabled', False) if globvars.config else False
+    ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
+
+    # Initialize AI worker instance if enabled
+    if ai_enabled and ai_worker_instance is None:
+        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=5)
+        ai_worker_instance.start(context.bot)
 
     if user.username is not None:
         username = user.username
@@ -64,8 +74,10 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     if not str(chat_id) in globvars.groups_member_track:
         globvars.groups_member_track[str(chat_id)] = []
 
-    # Track message in chat history (for AI context)
+    # Initialize ai_context_size at module level (will be used for chat history)
     if not str(chat_id) in globvars.chat_history:
+        # Get ai_context_size from loaded config
+        ai_context_size = globvars.config.get('ai_context_size', 50) if globvars.config else 50
         globvars.chat_history[str(chat_id)] = deque(maxlen=ai_context_size)
     
     if text and text.strip():
@@ -456,7 +468,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                     reply_to_message_id = None
 
                 # Submit to AI worker (non-blocking)
-                ai_worker_instance.submit(chat_id, context_messages, question, config, reply_to_message_id, message_id)
+                ai_worker_instance.submit(chat_id, context_messages, question, globvars.config, reply_to_message_id, message_id)
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
@@ -464,8 +476,12 @@ def error(bot, update, a):
 
 def sig_handler(signum, frame):
     print("Saving config...")
-    lib.save_config(config)
-    ai_worker_instance.stop()
+    from lib import globvars, lib
+    # Load config if not already loaded
+    if not hasattr(globvars, 'config') or globvars.config is None:
+        globvars.config = lib.load_config()
+    lib.save_config(globvars.config)
+    ai_worker_instance.stop() if ai_worker_instance else None
 
 def main():
     # Debug

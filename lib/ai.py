@@ -19,6 +19,11 @@ def call_ai_api(context_messages, query, config):
     Returns:
         AI response text or None on error
     """
+    # Validate config is not None
+    if config is None:
+        logger.error("AI configuration is None")
+        return None
+
     ai_url = config.get('ai_api_url')
     ai_model = config.get('ai_model_id')
     api_key = config.get('ai_api_key')
