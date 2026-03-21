@@ -145,7 +145,14 @@ class AIWorker:
                 
                 logger.debug(f"  Final text (repr): {repr(text[:200])}...")
                 
-                self.bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
+                # Send message with explicit Markdown parse mode
+                # Telegram needs this to render Markdown formatting
+                self.bot.send_message(
+                    chat_id=chat_id, 
+                    text=text, 
+                    reply_to_message_id=reply_to_message_id,
+                    parse_mode='Markdown'
+                )
                 # Save bot response to chat history and mark message_id as responded_to
                 self._save_bot_response(chat_id, text, message_id)
             except Exception as e:
