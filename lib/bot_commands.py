@@ -259,6 +259,37 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             bot.send_message(chat_id=chat_id, text=str(ex), parse_mode='Markdown')
         return
 
+    elif command == '/listgroups' and lib.is_admin(username) and chat_type == 'private':
+        """List all groups where the bot is active"""
+        try:
+            # Get all tracked groups from globvars.groups_name_track
+            groups = globvars.groups_name_track
+            
+            if not groups:
+                bot.send_message(chat_id=chat_id, text='No groups found. The bot is not active in any groups yet.')
+                return
+            
+            # Format response
+            response = '<b>📁 Groups where Krypton is active:</b>\n\n'
+            response += f'<b>Total:</b> <code>{len(groups)}</code> groups\n\n'
+            response += '<b>List:</b>\n'
+            
+            # Sort by chat_id for consistency
+            sorted_groups = sorted(groups.items(), key=lambda x: int(x[0]))
+            
+            for i, (chat_id, chat_title) in enumerate(sorted_groups, 1):
+                response += f'{i}. <code>{chat_id}</code> - <b>{chat_title}</b>\n'
+            
+            # Add info about tracking
+            response += '\n<b>Note:</b> This list shows groups that have been tracked since the bot started.'
+            
+            bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
+            
+        except Exception as ex:
+            logger.error(f"Error getting listgroups: {ex}")
+            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}')
+        return
+
     elif command == '/listmembers' and lib.is_admin(username) and chat_type == 'private':
         if not params:
             bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>')
