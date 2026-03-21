@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 class AIWorker:
     """Background worker that processes AI requests with rate limiting."""
-    
+
     def __init__(self, rate_limit_seconds=5, queue_maxsize=10):
         """
         Initialize AI worker.
-        
+
         Args:
             rate_limit_seconds: Minimum seconds between AI API calls
             queue_maxsize: Maximum queue size (backpressure)
@@ -27,7 +27,7 @@ class AIWorker:
         self.worker_thread = None
         self.running = False
         self.bot = None
-        
+
     def start(self, bot_instance):
         """Start the background worker thread."""
         self.bot = bot_instance
@@ -35,7 +35,7 @@ class AIWorker:
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
         logger.info("AI worker started with rate limit: %s seconds", self.rate_limit)
-    
+
     def stop(self):
         """Stop the background worker thread."""
         self.running = False
@@ -48,11 +48,11 @@ class AIWorker:
         if self.worker_thread:
             self.worker_thread.join(timeout=5)
         logger.info("AI worker stopped")
-    
+
     def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None):
         """
         Submit an AI request to the queue.
-        
+
         Args:
             chat_id: Telegram chat ID
             context_messages: List of context messages
@@ -60,7 +60,7 @@ class AIWorker:
             config: AI configuration
             reply_to_message_id: Optional message ID to reply to
             message_id: Original message ID (to track that we've responded to it)
-            
+
         Returns:
             True if request was queued, False if queue is full
         """
@@ -79,7 +79,7 @@ class AIWorker:
             logger.warning("AI queue is full, request dropped for chat %s", chat_id)
             self._send_queue_full_message(chat_id)
             return False
-    
+
     def _worker_loop(self):
         """Background worker loop that processes AI requests."""
         while self.running:
@@ -88,14 +88,14 @@ class AIWorker:
                 request = self.queue.get(timeout=1)
             except queue.Empty:
                 continue
-            
+
             chat_id = request['chat_id']
             context_messages = request['context']
             query = request['query']
             config = request['config']
             reply_to_message_id = request.get('reply_to_message_id')
             message_id = request.get('message_id')
-            
+
             # Apply rate limiting
             with self.lock:
                 elapsed = time.time() - self.last_request_time
@@ -104,22 +104,26 @@ class AIWorker:
                     logger.info("Rate limiting: waiting %.1fs before AI request", wait_time)
                     time.sleep(wait_time)
                 self.last_request_time = time.time()
-            
+
             # Import ai module here to avoid circular imports
             import lib.ai as ai_module
-            
-            # Show typing indicator
-            self._send_chat_action(chat_id, 'typing')
-            
+
             # Call AI API
             response_text = ai_module.call_ai_api(context_messages, query, config)
+
+            # Send typing indicator JUST before sending response
+            # This keeps the user informed that the bot is about to reply
+            self._send_chat_action(chat_id, 'typing')
             
+            # Small delay to ensure typing indicator is visible
+            time.sleep(1)
+
             # Send response (with reply_to_message_id if set)
             if response_text:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
                 self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)
-    
+
     def _send_message(self, chat_id, text, reply_to_message_id=None, message_id=None):
         """Send a message through the bot."""
         if self.bot:
@@ -129,7 +133,7 @@ class AIWorker:
                 self._save_bot_response(chat_id, text, message_id)
             except Exception as e:
                 logger.error("Failed to send AI response: %s", e)
-    
+
     def _send_chat_action(self, chat_id, action):
         """Send a chat action (typing, etc.) through the bot."""
         if self.bot:
@@ -137,7 +141,7 @@ class AIWorker:
                 self.bot.send_chat_action(chat_id=chat_id, action=action)
             except Exception as e:
                 logger.error("Failed to send chat action: %s", e)
-    
+
     def _send_queue_full_message(self, chat_id):
         """Send a message when queue is full."""
         self._send_message(chat_id, "I'm busy processing another request. Please try again in a moment.")
@@ -145,7 +149,7 @@ class AIWorker:
     def _save_bot_response(self, chat_id, text, message_id=None):
         """
         Save bot response to chat history and mark message_id as responded_to.
-        
+
         Args:
             chat_id: Telegram chat ID
             text: Bot's response text
@@ -153,9 +157,9 @@ class AIWorker:
         """
         # Import globvars to access shared state
         import lib.globvars as globvars_module
-        
+
         chat_id_str = str(chat_id)
-        
+
         # Save bot response to chat history
         if chat_id_str in globvars_module.chat_history:
             msg_record = {
@@ -164,7 +168,7 @@ class AIWorker:
                 'timestamp': time.time()
             }
             globvars_module.chat_history[chat_id_str].append(msg_record)
-        
+
         # Mark message_id as responded_to (to avoid duplicate responses)
         if message_id is not None:
             if chat_id_str not in globvars_module.responded_to_message_ids:
