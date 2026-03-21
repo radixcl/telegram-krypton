@@ -33,6 +33,13 @@ from collections import deque
 def proc_message(update: Update, context: CallbackContext) -> None:
     # Import modules inside function to ensure proper initialization
     from lib import globvars
+    # Load config if not already loaded
+    if not hasattr(globvars, 'config') or globvars.config is None:
+        globvars.config = lib.load_config()
+
+    # Get ai_enabled and ai_enable_private from loaded config
+    ai_enabled = globvars.config.get('ai_enabled', False) if globvars.config else False
+    ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
     from lib import lib
     from lib import ai_worker
     from lib import ai
@@ -527,8 +534,6 @@ def main():
     
     # Extract AI settings from config
     ai_context_size = config.get('ai_context_size', 50)
-    ai_enabled = config.get('ai_enabled', False)
-    ai_enable_private = config.get('ai_enable_private', False)
     ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
     
     lib.open_db()
