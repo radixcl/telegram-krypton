@@ -6,11 +6,14 @@ import sqlite3
 import shlex
 import re
 
-from lib import globvars
-
 # get configuration
 def load_config():
+    # Import globvars inside function to avoid re-loading module
+    from lib import globvars
     global config
+    # Debug
+    import sys
+    print(f"DEBUG [load_config]: globvars.config_file = {globvars.config_file}", file=sys.stderr)
     try:
         cfg = json.load(open(globvars.config_file))
     except:

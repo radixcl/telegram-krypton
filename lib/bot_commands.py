@@ -2,15 +2,13 @@ import shlex
 import json
 import time
 import logging
-from lib import globvars
-from lib import lib
-
 from telegram import Update, ForceReply
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
 logger = logging.getLogger(__name__)
 
-config = lib.load_config()
+# Don't load config at import time - do it when commands are called
+# This prevents globvars.config_file from being None before main() sets it
 
 def get_chat_members(bot, chat_id, limit=None):
     """
@@ -63,7 +61,15 @@ def get_chat_members(bot, chat_id, limit=None):
     return members
 
 def proc_command(update: Update, context: CallbackContext) -> None:
+    # Import modules and load config when command is called
+    from lib import globvars
+    from lib import lib
+    
     global config
+    # Load config on first use
+    if config is None:
+        config = lib.load_config()
+    
     bot = context.bot
     chat_id = update.effective_chat.id
     chat_title = update.effective_chat.title

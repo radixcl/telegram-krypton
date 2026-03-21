@@ -9,13 +9,13 @@ import sys
 import logging
 import argparse
 
+# Debug: Check what happens at module load time
+if __name__ == '__main__':
+    print(f"DEBUG: __name__ = {__name__}")
+    print(f"DEBUG: sys.argv = {sys.argv}")
+
 from telegram import Update, ForceReply
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-
-from lib import globvars
-from lib import lib
-from lib import ai_worker
-from lib import bot_commands
 
 import sys
 import logging
@@ -456,25 +456,46 @@ def sig_handler(signum, frame):
     ai_worker_instance.stop()
 
 def main():
+    # Debug
+    import sys
+    print(f"DEBUG [main start]: __name__={__name__}", file=sys.stderr)
+    print(f"DEBUG [main start]: sys.argv={sys.argv}", file=sys.stderr)
+    
+    # Import modules inside main() to ensure proper initialization order
+    from lib import globvars
+    print(f"DEBUG [main import globvars]: globvars.config_file={globvars.config_file}", file=sys.stderr)
+    
+    from lib import lib
+    from lib import ai_worker
+    from lib import bot_commands
+    
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Krypton Telegram Bot')
-    parser.add_argument('-v', '--verbose', action='store_true', 
+    parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose/debug logging')
     parser.add_argument('--config', '-c', type=str, default='config.json',
                         help='Path to config file (default: config.json)')
     args = parser.parse_args()
     
+    print(f"DEBUG [args]: args={args}", file=sys.stderr)
     # Set logging level based on verbose flag
     log_level = logging.DEBUG if args.verbose else logging.INFO
     
     # Enable logging
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                         level=log_level)
-    
+
     logger = logging.getLogger(__name__)
+
+    # Set config file BEFORE importing lib
+    config_path = args.config if hasattr(args, 'config') and args.config else './config.json'
+    logger.info(f"DEBUG: Setting config_file to '{config_path}'")
+    globvars.config_file = config_path
     
-    # Load config file (either from command line arg or default)
-    globvars.config_file = args.config if hasattr(args, 'config') and args.config else './config.json'
+    # Debug: check if globvars.config_file was set
+    logger.info(f"DEBUG: globvars.config_file = '{globvars.config_file}'")
+    
+    # Now load config (globvars.config_file is already set)
     config = lib.load_config()
     
     # Extract AI settings from config
