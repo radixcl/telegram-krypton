@@ -9,6 +9,9 @@ import sys
 import logging
 import argparse
 
+# Global AI worker instance (used by main() and sig_handler)
+ai_worker_instance = None
+
 # Debug: Check what happens at module load time
 if __name__ == '__main__':
     print(f"DEBUG: __name__ = {__name__}")
@@ -31,9 +34,6 @@ from collections import deque
 # chat_history and responded_to_message_ids are already initialized in globvars
 
 def proc_message(update: Update, context: CallbackContext) -> None:
-    # Initialize AI worker instance reference (will be populated if initialized in main())
-    ai_worker_instance = None
-    
     # Import modules inside function to ensure proper initialization
     from lib import globvars
     from lib import lib
@@ -479,9 +479,9 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 if ai_worker_instance:
                     ai_worker_instance.submit(chat_id, context_messages, question, globvars.config, reply_to_message_id, message_id)
                 else:
-                    # Log warning if worker is None
+                    # Log warning if worker is None (use print to avoid logger not defined)
                     if globvars.config and globvars.config.get('ai_enabled', False):
-                        logger.warning("AI worker not initialized despite ai_enabled=True")
+                        print("WARNING: AI worker not initialized despite ai_enabled=True")
 
 def error(bot, update, a):
     """Log Errors caused by Updates."""
@@ -490,11 +490,14 @@ def error(bot, update, a):
 def sig_handler(signum, frame):
     print("Saving config...")
     from lib import globvars, lib
+    # Initialize ai_worker_instance reference (will be populated if initialized in main())
+    global ai_worker_instance
     # Load config if not already loaded
     if not hasattr(globvars, 'config') or globvars.config is None:
         globvars.config = lib.load_config()
     lib.save_config(globvars.config)
-    ai_worker_instance.stop() if ai_worker_instance else None
+    if ai_worker_instance:
+        ai_worker_instance.stop()
 
 def main():
     # Debug
