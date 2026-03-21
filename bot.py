@@ -538,6 +538,9 @@ def main():
     logger.info("Using config file: %s" % globvars.config_file)
 
     
+    # Get ai_verbose from config or args
+    ai_verbose = config.get('ai_verbose', args.verbose) if config else args.verbose
+
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
     dp = updater.dispatcher
 
