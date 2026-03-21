@@ -35,6 +35,10 @@ def proc_message(update: Update, context: CallbackContext) -> None:
     from lib import globvars
     from lib import lib
     from lib import ai_worker
+
+    # Load config to get ai_context_size
+    if lib.config is None:
+        lib.config = lib.load_config()
     
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
