@@ -48,10 +48,6 @@ ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
 # Initialize AI worker
 ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
 
-# Enable logging
-logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=log_level)
-
 def proc_message(update: Update, context: CallbackContext) -> None:
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
@@ -487,8 +483,13 @@ def main():
     # Set logging level based on verbose flag
     log_level = logging.DEBUG if args.verbose else logging.INFO
     
-    lib.open_db()
+    # Enable logging
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                        level=log_level)
+    
     logger = logging.getLogger(__name__)
+    
+    lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
 
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
