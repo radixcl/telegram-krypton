@@ -128,15 +128,22 @@ class AIWorker:
         """Send a message through the bot."""
         if self.bot:
             try:
+                # DEBUG: Log the text before processing
+                logger.debug(f"SENDING MESSAGE (chat_id={chat_id}, reply_to={reply_to_message_id}):")
+                logger.debug(f"  Original text (repr): {repr(text[:200])}...")
+                
                 # Ensure text is not wrapped in code formatting that would escape Markdown
                 # Remove any accidental code block wrapping
                 if text.startswith('`') and text.endswith('`'):
                     text = text[1:-1].strip()
+                    logger.debug(f"  Removed code block wrapping")
                 
                 # Ensure text has proper newlines for Markdown parsing
                 # Telegram requires \n between block elements
                 import re
                 text = re.sub(r'\n+', '\n\n', text)
+                
+                logger.debug(f"  Final text (repr): {repr(text[:200])}...")
                 
                 self.bot.send_message(chat_id=chat_id, text=text, reply_to_message_id=reply_to_message_id)
                 # Save bot response to chat history and mark message_id as responded_to
