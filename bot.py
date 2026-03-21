@@ -7,6 +7,7 @@
 
 import sys
 import logging
+import argparse
 
 from telegram import Update, ForceReply
 import telegram
@@ -49,7 +50,7 @@ ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit)
 
 # Enable logging
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                    level=logging.INFO)
+                    level=log_level)
 
 logger = logging.getLogger(__name__)
 
@@ -479,6 +480,15 @@ def sig_handler(signum, frame):
     ai_worker_instance.stop()
 
 def main():
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description='Krypton Telegram Bot')
+    parser.add_argument('-v', '--verbose', action='store_true', 
+                        help='Enable verbose/debug logging')
+    args = parser.parse_args()
+    
+    # Set logging level based on verbose flag
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    
     lib.open_db()
     logger.info("Using config file: %s" % globvars.config_file)
 
