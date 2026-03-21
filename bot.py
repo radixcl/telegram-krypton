@@ -31,6 +31,11 @@ from collections import deque
 # chat_history and responded_to_message_ids are already initialized in globvars
 
 def proc_message(update: Update, context: CallbackContext) -> None:
+    # Import modules inside function to ensure proper initialization
+    from lib import globvars
+    from lib import lib
+    from lib import ai_worker
+    
     #chat_id = update.message.chat.id
     chat_id = update.effective_chat.id
     user = update.effective_user
