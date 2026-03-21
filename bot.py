@@ -10,16 +10,20 @@ import logging
 import argparse
 
 from telegram import Update, ForceReply
-import telegram
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
+from lib import globvars
+from lib import lib
+
+import sys
+import logging
+import argparse
 import sqlite3
 import time
-import json
 import shlex
 import pickle
-
-from lib import globvars
+import pprint
+from collections import deque
 
 # Initialize per-chat data structures in globvars
 # chat_history and responded_to_message_ids are already initialized in globvars
