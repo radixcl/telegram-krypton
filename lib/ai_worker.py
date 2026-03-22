@@ -175,7 +175,8 @@ class AIWorker:
                 parse_mode='Markdown'
             )
             # Save bot response to chat history and mark message_id as responded_to
-            self._save_bot_response(chat_id, text, message_id)
+            # AI responses are NOT already saved, so we add them to history
+            self._save_bot_response(chat_id, text, message_id, already_saved=False)
         except Exception as e:
             logger.error("Failed to send AI response: %s", e)
 
@@ -191,7 +192,7 @@ class AIWorker:
         """Send a message when queue is full."""
         self._send_message(chat_id, "I'm busy processing another request. Please try again in a moment.")
 
-    def _save_bot_response(self, chat_id, text, message_id=None):
+    def _save_bot_response(self, chat_id, text, message_id=None, already_saved=False):
         """
         Save bot response to chat history and mark message_id as responded_to.
 
@@ -199,20 +200,22 @@ class AIWorker:
             chat_id: Telegram chat ID
             text: Bot's response text
             message_id: Original message ID (to mark as responded_to)
+            already_saved: If True, skip adding to chat_history (already done by send_message_with_history)
         """
         # Import globvars to access shared state
         import lib.globvars as globvars_module
 
         chat_id_str = str(chat_id)
 
-        # Save bot response to chat history
-        if chat_id_str in globvars_module.chat_history:
-            msg_record = {
-                'author': 'You',  # Bot
-                'text': text,
-                'timestamp': time.time()
-            }
-            globvars_module.chat_history[chat_id_str].append(msg_record)
+        # Save bot response to chat history (skip if already done by send_message_with_history)
+        if not already_saved:
+            if chat_id_str in globvars_module.chat_history:
+                msg_record = {
+                    'author': 'You',  # Bot
+                    'text': text,
+                    'timestamp': time.time()
+                }
+                globvars_module.chat_history[chat_id_str].append(msg_record)
 
         # Mark message_id as responded_to (to avoid duplicate responses)
         if message_id is not None:

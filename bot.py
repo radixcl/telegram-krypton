@@ -34,6 +34,44 @@ from collections import deque
 # Initialize per-chat data structures in globvars
 # chat_history and responded_to_message_ids are already initialized in globvars
 
+
+def send_message_with_history(bot, chat_id, text, parse_mode='Markdown', author='You'):
+    """
+    Wrapper para enviar mensajes y registrarlos automáticamente en el historial de chat.
+
+    Esto asegura que TODAS las respuestas del bot se incluyan en el contexto de IA.
+
+    Args:
+        bot: Telegram Bot instance
+        chat_id: ID del chat (str o int)
+        text: Texto del mensaje a enviar
+        parse_mode: Modo de parseo de Telegram ('Markdown', 'HTML', etc.)
+        author: Autor del mensaje (por defecto 'You' para el bot)
+
+    Returns:
+        El texto enviado (para permitir cadenas en un solo paso)
+    """
+    from lib import globvars
+
+    chat_id_str = str(chat_id)
+
+    # Asegurar que chat_history está inicializado
+    if chat_id_str not in globvars.chat_history:
+        globvars.chat_history[chat_id_str] = deque(maxlen=50)
+
+    # Agregar respuesta del bot al historial ANTES de enviar
+    msg_record = {
+        'author': author,
+        'text': text,
+        'timestamp': time.time()
+    }
+    globvars.chat_history[chat_id_str].append(msg_record)
+
+    # Enviar mensaje a Telegram
+    bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+
+    return text
+
 def proc_message(update: Update, context: CallbackContext) -> None:
     # Import modules inside function to ensure proper initialization
     from lib import globvars
@@ -136,7 +174,8 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             data = text.split()
         
         if len(data) < 2:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
 
         _key = data[1]
@@ -146,12 +185,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             try:
                 _key = data[2]
             except:
-                bot.send_message(chat_id=chat_id, text="Error while parsing flags.")
+                response = "Error while parsing flags."
+                send_message_with_history(bot, chat_id, response, author=username)
                 return
 
         res = lib.get_def(_key)
         if res is None:
-            bot.send_message(chat_id=chat_id, text="Entry *%s* not found." % _key, parse_mode='Markdown')
+            response = "Entry *%s* not found." % _key
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
             return
         res_txt = res[4]
         answer_mode = 'Markdown'
@@ -181,10 +222,11 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
         
         try:
-            bot.send_message(chat_id=chat_id, text=response, parse_mode=answer_mode)
+            send_message_with_history(bot, chat_id, response, parse_mode=answer_mode, author=username)
         except Exception as ex:
             # FIXME
-            bot.send_message(chat_id=chat_id, text='ERROR CTM! (FIXME): ' + str(ex), parse_mode='Markdown')
+            response = 'ERROR CTM! (FIXME): ' + str(ex)
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
             print(response)
     
     # parse "!learn key value" requests
@@ -219,7 +261,8 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
         
         # get definition
@@ -281,21 +324,22 @@ def proc_message(update: Update, context: CallbackContext) -> None:
 
             else:
                 response = 'Expected definition, found NUL.'
-                bot.send_message(chat_id=chat_id, text=response)
+                send_message_with_history(bot, chat_id, response, author=username)
                 return
             
         try:
             lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', learn_flags, def_txt)
         except(sqlite3.IntegrityError):
             response = "key *%s* already exists" % key
-            bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
             return
         
         if def_txt == '':
             response = 'Learned blank entry for *%s*. (Why did you do that?)' % key
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
         else:
             response = 'Learned *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
 
     # parse "!forget key" requests
     elif cmd == '!forget':
@@ -316,18 +360,19 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
         
         if lib.is_def_locked(key) and force == False:
             response = 'Can\'t forget: Key is locked.'
-            bot.send_message(chat_id=chat_id, text=response)
+            send_message_with_history(bot, chat_id, response, author=username)
             return
         
         lib.del_key(key)
 
         response = 'Removed *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
 
     # parse "!lock key" requests
     elif cmd == '!lock':
@@ -342,13 +387,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
         
         lib.lock_key(key)
 
         response = 'Locked *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
 
     # parse "!unlock key" requests
     elif cmd == '!unlock':
@@ -363,13 +409,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
         
         lib.unlock_key(key)
 
         response = 'Unlocked *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+        send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
 
     # parse "!listkeys" requests
     elif cmd == '!listkeys':
@@ -381,13 +428,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
 
         total, results = lib.find_keys(key)
 
         response = 'Matched %s key(s): %s' % (total, results)
-        bot.send_message(chat_id=chat_id, text=response)
+        send_message_with_history(bot, chat_id, response, author=username)
 
     # parse "!find" requests
     elif cmd == '!find':
@@ -399,13 +447,14 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         try:
             key = lib.pop_first(data)
         except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+            response = "Expected key, found NUL."
+            send_message_with_history(bot, chat_id, response, author=username)
             return
 
         total, results = lib.find_value(key)
 
         response = 'Matched %s key(s): %s' % (total, results)
-        bot.send_message(chat_id=chat_id, text=response)
+        send_message_with_history(bot, chat_id, response, author=username)
 
     # AI handler (groups: mention required, private: auto if enabled)
     elif ai_enabled:
