@@ -7,6 +7,9 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 
 logger = logging.getLogger(__name__)
 
+# Global config variable - initialized when first command is called
+config = None
+
 # Don't load config at import time - do it when commands are called
 # This prevents globvars.config_file from being None before main() sets it
 
