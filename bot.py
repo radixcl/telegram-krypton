@@ -13,12 +13,13 @@ import argparse
 ai_worker_instance = None
 
 # Debug: Check what happens at module load time
+from telegram import Update, ForceReply
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+
+# Debug: Check what happens at module load time
 if __name__ == '__main__':
     print(f"DEBUG: __name__ = {__name__}")
     print(f"DEBUG: sys.argv = {sys.argv}")
-
-from telegram import Update, ForceReply
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 
 import sys
 import logging
@@ -559,9 +560,15 @@ def main():
     dp = updater.dispatcher
 
     # Initialize AI worker if enabled
+    logger.info(f"DEBUG: ai_enabled={ai_enabled}, ai_rate_limit={ai_rate_limit}, ai_verbose={ai_verbose}")
     if ai_enabled:
+        global ai_worker_instance
+        logger.info("Initializing AI worker...")
         ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit, verbose=ai_verbose)
         ai_worker_instance.start(updater.bot)
+        logger.info("AI worker initialized successfully")
+    else:
+        logger.warning("AI worker NOT initialized: ai_enabled=False")
 
     # on different commands - answer in Telegram
     dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))
