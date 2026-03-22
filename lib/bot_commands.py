@@ -399,3 +399,61 @@ def proc_command(update: Update, context: CallbackContext) -> None:
             logger.error(f"Error getting listmembers: {ex}")
             bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}')
         return
+
+
+def proc_help(update: Update, context: CallbackContext) -> None:
+    """Send help message to admin in private chat."""
+    from lib import globvars
+    from lib import lib
+
+    # Only work in private chats
+    chat_type = update.effective_chat.type
+    if chat_type != 'private':
+        return
+
+    bot = context.bot
+    chat_id = update.effective_chat.id
+
+    # Get username
+    username = None
+    if update.message.from_user.username is not None:
+        username = update.message.from_user.username
+    else:
+        username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
+
+    # Check if user is admin
+    if not lib.is_admin(username):
+        return
+
+    # Load config
+    config = globvars.config
+    if config is None:
+        config = lib.load_config()
+        globvars.config = config
+
+    # Build help message
+    help_text = """<b>📚 Krypton Bot - Comandos Disponibles</b>
+
+<b>Comandos de Administración:</b>
+  <code>/reloadcfg</code> - Recargar configuración
+  <code>/savecfg</code> - Guardar configuración actual
+  <code>/addadmin</code> - Añadir administrador
+  <code>/deladmin</code> - Eliminar administrador
+  <code>/addlearner</code> - Añadir aprendiz
+  <code>/dellearner</code> - Eliminar aprendiz
+  <code>/kick</code> - Expulsar usuario del grupo
+  <code>/op</code> - Promover a administrador del grupo
+  <code>/deop</code> - Quitar administración del grupo
+
+<b>Comandos de Información:</b>
+  <code>/getcfg</code> - Obtener configuración actual
+  <code>/getadmins</code> - Listar administradores
+  <code>/getlearners</code> - Listar aprendices
+  <code>/globvars</code> - Ver variables globales
+  <code>/getuserid</code> - Obtener ID de usuario
+  <code>/getchatid</code> - Obtener ID del chat
+  <code>/listgroups</code> - Listar grupos activos
+  <code>/listmembers</code> - Listar miembros de un grupo
+  <code>/help</code> - Mostrar esta ayuda"""
+
+    bot.send_message(chat_id=chat_id, text=help_text, parse_mode='HTML')

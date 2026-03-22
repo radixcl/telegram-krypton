@@ -588,6 +588,7 @@ def main():
     dp.add_handler(CommandHandler("deop", bot_commands.proc_command))
     dp.add_handler(CommandHandler("listgroups", bot_commands.proc_command))
     dp.add_handler(CommandHandler("listmembers", bot_commands.proc_command))
+    dp.add_handler(CommandHandler("help", bot_commands.proc_help))
 
     # text message handler
     dp.add_handler(MessageHandler(Filters.all, proc_message))
