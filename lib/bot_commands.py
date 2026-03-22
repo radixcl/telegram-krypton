@@ -431,7 +431,22 @@ def proc_help(update: Update, context: CallbackContext) -> None:
         config = lib.load_config()
         globvars.config = config
 
-    # Build help message
+    # Parse command and optional parameter
+    text = update.effective_message.text or ''
+    parts = text.split(maxsplit=1)
+    command = parts[0].lower()
+    param = parts[1].strip() if len(parts) > 1 else None
+
+    # If a command name is provided, show specific help
+    if param:
+        help_text = get_command_help(param)
+        if help_text:
+            bot.send_message(chat_id=chat_id, text=help_text, parse_mode='HTML')
+        else:
+            bot.send_message(chat_id=chat_id, text=f"<b>❌ Comando no encontrado:</b> <code>{param}</code>\n\n<b>📚 Usa</b> <code>/help</code> <b>para ver todos los comandos disponibles.</b>", parse_mode='HTML')
+        return
+
+    # Show general help
     help_text = """<b>📚 Krypton Bot - Comandos Disponibles</b>
 
 <b>Comandos de Administración:</b>
@@ -454,6 +469,201 @@ def proc_help(update: Update, context: CallbackContext) -> None:
   <code>/getchatid</code> - Obtener ID del chat
   <code>/listgroups</code> - Listar grupos activos
   <code>/listmembers</code> - Listar miembros de un grupo
-  <code>/help</code> - Mostrar esta ayuda"""
+  <code>/help</code> - Mostrar esta ayuda
+
+<b>💡 Tip:</b> Usa <code>/help &lt;comando&gt;</code> para ver ayuda específica de un comando.
+"""
 
     bot.send_message(chat_id=chat_id, text=help_text, parse_mode='HTML')
+
+
+def get_command_help(command_name: str) -> str:
+    """Get help text for a specific command."""
+    command_help = {
+        '/reloadcfg': """<b>🔄 /reloadcfg</b>
+
+<b>Descripción:</b> Recarga la configuración desde el archivo.
+
+<b>Uso:</b> <code>/reloadcfg</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/reloadcfg</code>""",
+
+        '/savecfg': """<b>💾 /savecfg</b>
+
+<b>Descripción:</b> Guarda la configuración actual a disco.
+
+<b>Uso:</b> <code>/savecfg</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/savecfg</code>""",
+
+        '/addadmin': """<b>👑 /addadmin</b>
+
+<b>Descripción:</b> Añade un usuario como administrador del bot.
+
+<b>Uso:</b> <code>/addadmin @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/addadmin radix</code>""",
+
+        '/deladmin': """<b>❌ /deladmin</b>
+
+<b>Descripción:</b> Elimina un usuario como administrador del bot.
+
+<b>Uso:</b> <code>/deladmin @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/deladmin radix</code>""",
+
+        '/addlearner': """<b>📖 /addlearner</b>
+
+<b>Descripción:</b> Añade un usuario como aprendiz (puede usar !learn).
+
+<b>Uso:</b> <code>/addlearner @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/addlearner paoloandreotti</code>""",
+
+        '/dellearner': """<b>📛 /dellearner</b>
+
+<b>Descripción:</b> Elimina un usuario como aprendiz.
+
+<b>Uso:</b> <code>/dellearner @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/dellearner paoloandreotti</code>""",
+
+        '/kick': """<b>🚫 /kick</b>
+
+<b>Descripción:</b> Expulsa a un usuario del grupo.
+
+<b>Uso:</b> <code>/kick @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/kick troll_user</code>""",
+
+        '/op': """<b>⬆️ /op</b>
+
+<b>Descripción:</b> Promueve a un usuario a administrador del grupo.
+
+<b>Uso:</b> <code>/op @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/op moderador</code>""",
+
+        '/deop': """<b>⬇️ /deop</b>
+
+<b>Descripción:</b> Remueve la administración de un usuario del grupo.
+
+<b>Uso:</b> <code>/deop @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/deop exmod</code>""",
+
+        '/getcfg': """<b>📋 /getcfg</b>
+
+<b>Descripción:</b> Muestra la configuración actual del bot.
+
+<b>Uso:</b> <code>/getcfg</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/getcfg</code>""",
+
+        '/getadmins': """<b>👥 /getadmins</b>
+
+<b>Descripción:</b> Lista los administradores del bot.
+
+<b>Uso:</b> <code>/getadmins</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/getadmins</code>""",
+
+        '/getlearners': """<b>📚 /getlearners</b>
+
+<b>Descripción:</b> Lista los aprendices del bot.
+
+<b>Uso:</b> <code>/getlearners</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/getlearners</code>""",
+
+        '/globvars': """<b>🔧 /globvars</b>
+
+<b>Descripción:</b> Muestra las variables globales del bot.
+
+<b>Uso:</b> <code>/globvars</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/globvars</code>""",
+
+        '/getuserid': """<b>🆔 /getuserid</b>
+
+<b>Descripción:</b> Obtiene el ID de Telegram de un usuario.
+
+<b>Uso:</b> <code>/getuserid @username</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/getuserid radix</code>""",
+
+        '/getchatid': """<b>🏠 /getchatid</b>
+
+<b>Descripción:</b> Obtiene el ID del chat actual.
+
+<b>Uso:</b> <code>/getchatid</code>
+
+<b>Permisos:</b> Todos los usuarios
+
+<b>Ejemplo:</b> <code>/getchatid</code>""",
+
+        '/listgroups': """<b>📁 /listgroups</b>
+
+<b>Descripción:</b> Lista todos los grupos donde el bot está activo.
+
+<b>Uso:</b> <code>/listgroups</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/listgroups</code>""",
+
+        '/listmembers': """<b>👥 /listmembers</b>
+
+<b>Descripción:</b> Lista los miembros de un grupo.
+
+<b>Uso:</b> <code>/listmembers &lt;nombre_grupo&gt;</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/listmembers #Linux</code>""",
+
+        '/help': """<b>📚 /help</b>
+
+<b>Descripción:</b> Muestra ayuda general o ayuda específica de un comando.
+
+<b>Uso:</b> <code>/help</code> o <code>/help &lt;comando&gt;</code>
+
+<b>Permisos:</b> Solo administradores
+
+<b>Ejemplo:</b> <code>/help</code> o <code>/help listmembers</code>"""
+    }
+
+    # Normalize command name
+    command_name = command_name.lower().strip()
+    if not command_name.startswith('/'):
+        command_name = '/' + command_name
+
+    return command_help.get(command_name, None)
