@@ -77,7 +77,7 @@ class AIWorker:
             })
             # Log context in debug mode
             logger.debug("AI request queued for chat %s", chat_id)
-            if verbose:
+            if self.verbose:
                 logger.debug("AI CONTEXT: chat_id=%s, query=%s", chat_id, query[:100] if query else None)
                 logger.debug("AI CONTEXT: messages=%s", context_messages[-5:] if len(context_messages) > 5 else context_messages)
             return True
@@ -123,7 +123,7 @@ class AIWorker:
                 logger.debug("  context messages (last 10):")
                 for i, msg in enumerate(context_messages[-10:] if len(context_messages) > 10 else context_messages):
                     logger.debug("    [%d] %s: %s", i, msg.get('author', 'unknown'), msg.get('text', '')[:100])
-                logger.debug("  config: %s", config.get('ai_model_id', 'N/A'))
+                logger.debug("  config: %s", request['config'].get('ai_model_id', 'N/A'))
                 logger.debug("="*60)
 
             # Call AI API
