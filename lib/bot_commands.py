@@ -80,6 +80,8 @@ def proc_command(update: Update, context: CallbackContext) -> None:
         username = update.message.from_user.username
     else:
         username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
+
+    logger.debug(f"DEBUG proc_command: chat_id={chat_id}, chat_type={chat_type}, username={username}")
     
     try:
         command = shlex.split(text)[0]
