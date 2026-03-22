@@ -7,9 +7,6 @@ from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, Callb
 
 logger = logging.getLogger(__name__)
 
-# Global config variable - initialized when first command is called
-config = None
-
 # Don't load config at import time - do it when commands are called
 # This prevents globvars.config_file from being None before main() sets it
 
@@ -67,12 +64,13 @@ def proc_command(update: Update, context: CallbackContext) -> None:
     # Import modules and load config when command is called
     from lib import globvars
     from lib import lib
-    
-    global config
-    # Load config on first use
+
+    # Use globvars.config which is loaded by bot.py
+    config = globvars.config
     if config is None:
         config = lib.load_config()
-    
+        globvars.config = config
+
     bot = context.bot
     chat_id = update.effective_chat.id
     chat_title = update.effective_chat.title
