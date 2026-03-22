@@ -175,7 +175,7 @@ def proc_message(update: Update, context: CallbackContext) -> None:
         
         if len(data) < 2:
             response = "Expected key, found NUL."
-            send_message_with_history(bot, chat_id, response, author=username)
+            send_message_with_history(bot, chat_id, response, author='You')
             return
 
         _key = data[1]
@@ -186,13 +186,13 @@ def proc_message(update: Update, context: CallbackContext) -> None:
                 _key = data[2]
             except:
                 response = "Error while parsing flags."
-                send_message_with_history(bot, chat_id, response, author=username)
+                send_message_with_history(bot, chat_id, response, author='You')
                 return
 
         res = lib.get_def(_key)
         if res is None:
             response = "Entry *%s* not found." % _key
-            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author='You')
             return
         res_txt = res[4]
         answer_mode = 'Markdown'
@@ -222,11 +222,11 @@ def proc_message(update: Update, context: CallbackContext) -> None:
             response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
         
         try:
-            send_message_with_history(bot, chat_id, response, parse_mode=answer_mode, author=username)
+            send_message_with_history(bot, chat_id, response, parse_mode=answer_mode, author='You')
         except Exception as ex:
             # FIXME
             response = 'ERROR CTM! (FIXME): ' + str(ex)
-            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author=username)
+            send_message_with_history(bot, chat_id, response, parse_mode='Markdown', author='You')
             print(response)
     
     # parse "!learn key value" requests
