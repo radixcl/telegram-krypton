@@ -307,33 +307,36 @@ def proc_command(update: Update, context: CallbackContext) -> None:
         group_name = params[0]
         
         try:
+            original_chat_id_for_response = chat_id
+            logger.debug(f"DEBUG /listmembers: original_chat_id={original_chat_id_for_response}, group_name={group_name}")
             # Search for chat by title using globvars.groups_name_track
             chats = []
-            for chat_id, chat_title in globvars.groups_name_track.items():
-                if group_name.lower() in chat_title.lower():
+            for tracked_chat_id, tracked_chat_title in globvars.groups_name_track.items():
+                if group_name.lower() in tracked_chat_title.lower():
                     chats.append({
-                        'chat_id': chat_id,
-                        'chat_title': chat_title
+                        'chat_id': tracked_chat_id,
+                        'chat_title': tracked_chat_title
                     })
             
             if not chats:
-                bot.send_message(chat_id=chat_id, text=f'No chats found with name <b>{group_name}</b>')
+                bot.send_message(chat_id=original_chat_id_for_response, text=f'No chats found with name <b>{group_name}</b>')
                 return
             
             if len(chats) > 1:
-                bot.send_message(chat_id=chat_id, text=f'Found {len(chats)} matching chats:\n\n')
+                bot.send_message(chat_id=original_chat_id_for_response, text=f'Found {len(chats)} matching chats:\n\n')
                 for i, c in enumerate(chats, 1):
-                    bot.send_message(chat_id=chat_id, text=f'{i}. <b>{c["chat_id"]}</b>: {c["chat_title"]}')
-                bot.send_message(chat_id=chat_id, text='\nPlease specify the exact chat_id or use one of the numbers above.')
+                    bot.send_message(chat_id=original_chat_id_for_response, text=f'{i}. <b>{c["chat_id"]}</b>: {c["chat_title"]}')
+                bot.send_message(chat_id=original_chat_id_for_response, text='\nPlease specify the exact chat_id or use one of the numbers above.')
                 return
             
             target_chat_id = chats[0]['chat_id']
-            
+            target_chat_title = chats[0]['chat_title']
+
             # Get members
             members = get_chat_members(bot, target_chat_id)
-            
+
             # Format response using HTML mode (emojis work better with HTML)
-            response = f'<b>Members of {chat_title}</b>\n'
+            response = f'<b>Members of {target_chat_title}</b>\n'
             response += f'<b>Total:</b> {len(members)} members\n\n'
             
             # Separate by type
