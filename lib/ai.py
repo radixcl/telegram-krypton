@@ -86,7 +86,14 @@ Format your response naturally as if you're participating in the conversation.""
 
             # Extract content from response
             if 'choices' in result and len(result['choices']) > 0:
-                return result['choices'][0]['message']['content']
+                content = result['choices'][0]['message']['content']
+                # Ensure proper UTF-8 encoding of the response
+                if isinstance(content, str):
+                    try:
+                        content = content.encode('utf-8').decode('utf-8')
+                    except UnicodeEncodeError:
+                        content = content.encode('utf-8', errors='replace').decode('utf-8')
+                return content
             else:
                 logger.error(f"Unexpected AI response format: {result}")
                 return None
