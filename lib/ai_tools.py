@@ -118,7 +118,9 @@ def _reason(e):
         return "the site took too long to respond"
     if isinstance(e, requests.ConnectionError):
         return "could not connect to the site"
-    if isinstance(e, requests.RequestException):
+    if isinstance(e, socket.gaierror):
+        return "the site's address could not be found"
+    if isinstance(e, OSError):
         return f"request failed ({type(e).__name__})"
     return str(e)
 
@@ -178,7 +180,7 @@ def instagram_preview(args, config, ctx):
             data = d.raw.read(MAX_MEDIA_BYTES + 1, decode_content=True)
         if len(data) > MAX_MEDIA_BYTES:
             raise ValueError("the media is larger than 45 MB, Telegram bots cannot send it")
-    except (requests.RequestException, ValueError) as e:
+    except (OSError, ValueError) as e:
         return _failed(e)
     ctx.setdefault('media', []).append((kind, data, ''))  # sent by the AI worker as the whole answer
     return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent as the whole answer. Reply just 'ok'."
@@ -240,9 +242,9 @@ def link_preview(args, config, ctx):
                 data, ctype, _, _ = _http_get(urljoin(final, image), MAX_PHOTO_BYTES, ('image/',), TELEGRAM_UA)
                 if 'svg' in ctype:
                     data = None
-            except (requests.RequestException, ValueError):
+            except (OSError, ValueError):
                 data = None
-    except (requests.RequestException, ValueError) as e:
+    except (OSError, ValueError) as e:
         return _failed(e)
     ctx.setdefault('media', []).append(('image', data, caption) if data else ('text', None, caption))
     return "Preview attached; it will be sent as the whole answer. Reply just 'ok'."
