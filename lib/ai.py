@@ -99,14 +99,20 @@ Format your response naturally as if you're participating in the conversation.""
 
     for round_ in range(max_rounds + 1):
         payload = {"model": ai_model, "messages": messages, "max_tokens": 512, "temperature": 0.7}
-        if tools_on and round_ < max_rounds:  # last round: no tools, force a text answer
+        if tools_on and round_ < max_rounds:
             payload["tools"] = [WEB_SEARCH_TOOL]
+        elif round_ > 0:  # last round: no tools, force a text answer
+            messages.append({"role": "user", "content": "No more searches available. Answer now with what you found."})
         message = _chat(ai_url, headers, payload, ai_timeout, ai_retries)
         if message is None:
             return None
         calls = message.get('tool_calls')
         if not calls:
-            return message.get('content')
+            content = message.get('content')
+            if content and '<tool_call>' in content:  # model wrote a call as text: don't show it
+                logger.warning("AI answered with a raw tool call, dropping it")
+                return None
+            return content
         messages.append(message)
         for call in calls:
             messages.append({"role": "tool", "tool_call_id": call['id'], "content": run_tool(call, config)})
