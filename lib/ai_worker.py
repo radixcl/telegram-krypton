@@ -150,7 +150,7 @@ class AIWorker:
             # A media request (instagram_preview) is answered with the media alone, no text
             if ctx.get('media'):
                 for kind, data, caption in ctx['media']:
-                    self._send_media(chat_id, kind, data, caption, reply_to_message_id)
+                    self._send_media(chat_id, kind, data, caption, message_id or reply_to_message_id)  # reply to whoever asked
                 self._save_bot_response(chat_id, ctx['media'][0][2] or "(sent a media preview)", message_id)
             elif response_text:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
