@@ -92,7 +92,7 @@ class LibTest(unittest.TestCase):
         ctx = {}
         with mock.patch.object(ai_tools.requests, 'get', side_effect=[page, dl]) as g, \
                 mock.patch.object(ai_tools, '_check_public'):
-            f({'url': 'https://www.instagram.com/reel/AbC-d_1/?igsh=x'}, {}, ctx)
+            f({'url': 'https://www.kkinstagram.com/reel/AbC-d_1/?igsh=x'}, {}, ctx)
         self.assertEqual(g.call_args_list[0][0][0], 'https://www.instagram.com/reel/AbC-d_1/embed/captioned/')
         self.assertEqual(g.call_args_list[1][0][0], 'https://x.fbcdn.net/a.mp4?a=1&2')
         self.assertEqual(ctx['media'], [('video', b'MP4')])

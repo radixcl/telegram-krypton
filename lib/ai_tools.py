@@ -110,6 +110,8 @@ def fetch_url(args, config, ctx):
 
 
 INSTAGRAM_PATH = re.compile(r'^/(?:[\w.]+/)?(p|reel|reels|tv)/([\w-]+)')
+# users paste mirror links (kkinstagram...) too; only the post code is used, the fetch always goes to instagram.com
+INSTAGRAM_HOSTS = ('instagram.com', 'kkinstagram.com', 'ddinstagram.com')
 INSTAGRAM_CDN = ('.fbcdn.net', '.cdninstagram.com')
 MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 
@@ -120,8 +122,8 @@ MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 def instagram_preview(args, config, ctx):
     p = urlparse(args['url'].strip())
     m = INSTAGRAM_PATH.match(p.path)
-    if p.scheme not in ('http', 'https') or (p.hostname or '').removeprefix('www.') != 'instagram.com' or not m:
-        raise ValueError("not an instagram.com post/reel URL")
+    if p.scheme not in ('http', 'https') or '.'.join((p.hostname or '').split('.')[-2:]) not in INSTAGRAM_HOSTS or not m:
+        raise ValueError("not an Instagram post/reel URL")
     if ctx.get('media'):
         return "A preview is already attached."
     # ponytail: scrapes Instagram's public embed page (no login, may change without notice).
@@ -135,7 +137,7 @@ def instagram_preview(args, config, ctx):
     media_url = json.loads('"' + json.loads('"' + v.group(1) + '"') + '"') if v else unescape(i.group(1)) if i else ''
     host = urlparse(media_url).hostname or ''
     if not host.endswith(INSTAGRAM_CDN):
-        raise ValueError("could not get the media (private or removed post?)")
+        raise ValueError("no media available: the post is private, age-restricted (needs login) or removed")
     _check_public(media_url)
     with requests.get(media_url, timeout=30, stream=True) as d:
         d.raise_for_status()
