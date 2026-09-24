@@ -48,11 +48,11 @@ Format your response naturally as if you're participating in the conversation.""
 
     # Add context messages (last N messages)
     for msg in context_messages:
-        role = "user" if msg.get('author') != "You" else "assistant"
-        messages.append({
-            "role": role,
-            "content": f"{msg['author']}: {msg['text']}"
-        })
+        if msg.get('author') == "You":
+            # bot's own past replies: no "You:" prefix, or the model imitates it
+            messages.append({"role": "assistant", "content": msg['text']})
+        else:
+            messages.append({"role": "user", "content": f"{msg['author']}: {msg['text']}"})
 
     # Add the current query
     messages.append({"role": "user", "content": query})

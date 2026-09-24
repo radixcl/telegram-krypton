@@ -3,7 +3,9 @@ import sqlite3
 import unittest
 from types import SimpleNamespace as NS
 
-from lib import globvars, lib
+from unittest import mock
+
+from lib import ai, globvars, lib
 
 
 class LibTest(unittest.TestCase):
@@ -48,6 +50,16 @@ class LibTest(unittest.TestCase):
         lib.send(upd, ctx, 'hi', remember=True)
         self.assertEqual(sent, ['plain', 'hi'])
         self.assertEqual([m['author'] + ':' + m['text'] for m in globvars.chat_history['5']], ['You:hi'])
+
+    def test_ai_prompt_prefixes_users_but_not_bot(self):
+        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_api_key': 'k'}
+        ctx = [{'author': 'bob', 'text': 'hola'}, {'author': 'You', 'text': 'buenas'}]
+        with mock.patch.object(ai.requests, 'post') as post:
+            post.return_value.json.return_value = {'choices': [{'message': {'content': 'ok'}}]}
+            ai.call_ai_api(ctx, 'q', cfg)
+        msgs = post.call_args.kwargs['json']['messages']
+        self.assertEqual([(m['role'], m['content']) for m in msgs[1:3]],
+                         [('user', 'bob: hola'), ('assistant', 'buenas')])
 
 
 if __name__ == '__main__':
