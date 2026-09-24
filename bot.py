@@ -5,603 +5,348 @@
 # - Matias Fernandez <matias.fernandez@gmail.com>
 #
 
-import sys
-import logging
 import argparse
-
-# Global AI worker instance (used by main() and sig_handler)
-ai_worker_instance = None
-
-# Debug: Check what happens at module load time
-from telegram import Update, ForceReply
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
-
-# Debug: Check what happens at module load time
-if __name__ == '__main__':
-    print(f"DEBUG: __name__ = {__name__}")
-    print(f"DEBUG: sys.argv = {sys.argv}")
-
-import sys
 import logging
-import argparse
 import sqlite3
 import time
-import shlex
-import pickle
-import pprint
 from collections import deque
 
-# Initialize per-chat data structures in globvars
-# chat_history and responded_to_message_ids are already initialized in globvars
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
-def proc_message(update: Update, context: CallbackContext) -> None:
-    # Import modules inside function to ensure proper initialization
-    from lib import globvars
-    from lib import lib
-    # Load config if not already loaded
-    if not hasattr(globvars, 'config') or globvars.config is None:
-        globvars.config = lib.load_config()
+from lib import ai, ai_worker, bot_commands, globvars, lib
 
-    # Get ai_enabled and ai_enable_private from loaded config
-    ai_enabled = globvars.config.get('ai_enabled', False) if globvars.config else False
-    ai_enable_private = globvars.config.get('ai_enable_private', False) if globvars.config else False
+logger = logging.getLogger(__name__)
 
-    from lib import ai_worker
-    from lib import ai
+# Global AI worker instance (set by main(), used by ai_reply and sig_handler)
+ai_worker_instance = None
 
-    #chat_id = update.message.chat.id
-    chat_id = update.effective_chat.id
-    user = update.effective_user
-    user_id = user.id
-    bot = context.bot
-    text = update.message.text
-    verbose = False
 
-    # Load config if not already loaded
-    if not hasattr(globvars, 'config') or globvars.config is None:
-        globvars.config = lib.load_config()
+# --- tracking ---------------------------------------------------------------
 
-    
+def track(update, user):
+    """Remember username -> id, group names and group members."""
+    chat = update.effective_chat
+    msg = update.message
 
     if user.username is not None:
-        username = user.username
-    else:
-        username = "%s %s" % (user.first_name, user.last_name)
+        globvars.users_track[user.username] = user.id
 
-    # tracking
-    if not None in (username, update.message.from_user.id):
-        globvars.users_track[update.message.from_user.username] = update.message.from_user.id
-        #print("TRACK USER: %s -> %s" % (update.message.from_user.username, update.message.from_user.id))
-
-    if not str(chat_id) in globvars.groups_member_track:
-        globvars.groups_member_track[str(chat_id)] = []
-
-    # Initialize ai_context_size at module level (will be used for chat history)
-    if not str(chat_id) in globvars.chat_history:
-        # Get ai_context_size from loaded config
-        ai_context_size = globvars.config.get('ai_context_size', 50) if globvars.config else 50
-        globvars.chat_history[str(chat_id)] = deque(maxlen=ai_context_size)
-    else:
-        # ai_context_size already defined from previous messages
-        ai_context_size = 50
-    
-    if text and text.strip():
-        msg_record = {
-            'author': username,
-            'text': text,
-            'timestamp': time.time()
-        }
-        globvars.chat_history[str(chat_id)].append(msg_record)
-
-    if update.message.chat.type in ('group', 'channel', 'supergroup'):
-        globvars.groups_name_track[chat_id] = update.message.chat.title
-
-        if len(update.message.new_chat_members) > 0:
-            for member in update.message.new_chat_members:
-                if member.username is not None:
-                    globvars.users_track[member.username] = member.id
-                    #print("TRACK USER: %s -> %s" % (member.username, member.id))
-                if user_id not in set(globvars.groups_member_track[str(chat_id)]):
-                    globvars.groups_member_track[str(chat_id)].append(member.id)
-                    #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, member.id))
-
-        elif update.message.left_chat_member is not None:
-            member = update.message.left_chat_member
-            if member.username is not None:
-                globvars.users_track[member.username] = member.id
-                #print("TRACK USER: %s -> %s" % (member.username, member.id))
-            try:
-                globvars.groups_member_track[str(chat_id)].remove(member.id)
-                #print("TRACK REMOVE MEMBER: %s -> %s" % (chat_id, member.id))
-                return
-            except:
-                pass
-
-        else:
-            if user_id not in set(globvars.groups_member_track[str(chat_id)]):
-                globvars.groups_member_track[str(chat_id)].append(user_id)
-                #print("TRACK ADD MEMBER: %s -> %s" % (chat_id, user_id))
-
-
-    if text is None or text == '':
-        # not a chat message
+    members = globvars.groups_member_track.setdefault(str(chat.id), [])
+    if chat.type not in ('group', 'channel', 'supergroup'):
         return
 
-    cmd = text.split()[0]
-    # parse "?? definition" queries
-    if cmd == '??':
-        try:
-            data = shlex.split(text)
-        except ValueError:
-            data = text.split()
-        
-        if len(data) < 2:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+    globvars.groups_name_track[str(chat.id)] = chat.title  # str: JSON keys are always str
+
+    if msg.new_chat_members:
+        joined = list(msg.new_chat_members)
+    elif msg.left_chat_member is not None:
+        left = msg.left_chat_member
+        if left.username is not None:
+            globvars.users_track[left.username] = left.id
+        if left.id in members:
+            members.remove(left.id)
+        return
+    else:
+        joined = [user]
+
+    for member in joined:
+        if member.username is not None:
+            globvars.users_track[member.username] = member.id
+        if member.id not in members:
+            members.append(member.id)
+
+
+# --- knowledge base commands ("??" and "!xxx") -------------------------------
+# Each takes (update, context, username, args) where args excludes the command.
+
+def need_key(update, context, args):
+    """First argument, or None after replying "Expected key"."""
+    if not args:
+        lib.send(update, context, "Expected key, found NUL.")
+        return None
+    return args[0]
+
+def cmd_query(update, context, username, args):
+    """?? [-a] key"""
+    verbose = bool(args) and args[0] == '-a'
+    if verbose:
+        args = args[1:]
+        if not args:
+            lib.send(update, context, "Error while parsing flags.")
             return
 
-        _key = data[1]
+    key = need_key(update, context, args)
+    if key is None:
+        return
 
-        if _key == '-a':
-            verbose = True
-            try:
-                _key = data[2]
-            except:
-                bot.send_message(chat_id=chat_id, text="Error while parsing flags.")
-                return
+    res = lib.get_def(key)
+    if res is None:
+        lib.send(update, context, "Entry *%s* not found." % key, 'Markdown')
+        return
 
-        res = lib.get_def(_key)
-        if res is None:
-            bot.send_message(chat_id=chat_id, text="Entry *%s* not found." % _key, parse_mode='Markdown')
-            return
-        res_txt = res[4]
-        answer_mode = 'Markdown'
-        if lib.is_url(res_txt):
-            answer_mode = 'html'
-            response = response = '<b>%s</b> == %s' % (res[0], res_txt)
-        else:
-            res_txt = res_txt.replace('%n', '`@' + username + '`')
-            response = '*%s* == `%s`' % (res[0], res_txt)
-        
-        # check if res_txt starts with .tg_reply_to:
-        if res_txt.startswith('.tg_reply_to:'):
-            answer_mode = 'html'
-            # get message_id and file_id
-            _, message_id, file_id = res_txt.split(':')
-            # send photo
-            #bot.send_photo(chat_id=chat_id, photo=file_id, reply_to_message_id=int(message_id))
-            text = "<b>%s</b> == " % res[0]
-            if verbose == True:
-                text += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
-            bot.send_photo(chat_id=chat_id, photo=file_id, caption=text, parse_mode=answer_mode)
-            return
+    res_txt = res[4]
+    answer_mode = 'Markdown'
+    if lib.is_url(res_txt):
+        answer_mode = 'html'
+        response = '<b>%s</b> == %s' % (res[0], res_txt)
+    else:
+        res_txt = res_txt.replace('%n', '`@' + username + '`')
+        response = '*%s* == `%s`' % (res[0], res_txt)
 
-        if verbose == True and answer_mode == 'Markdown':
-            response += '\n_(author: %s) (%s)' % (res[2], time.ctime(int(res[1]))) + '_'
-        elif verbose == True and answer_mode == 'html':
-            response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
-        
-        try:
-            bot.send_message(chat_id=chat_id, text=response, parse_mode=answer_mode)
-        except Exception as ex:
-            # FIXME
-            bot.send_message(chat_id=chat_id, text='ERROR CTM! (FIXME): ' + str(ex), parse_mode='Markdown')
-            print(response)
-    
-    # parse "!learn key value" requests
-    elif cmd == '!learn':
-        if not lib.is_learner(username):
-            #response = "Adonde la viste @%s" % username
-            #bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-            return
+    # stored photo: ".tg_reply_to:<message_id>:<file_id>"
+    if res_txt.startswith('.tg_reply_to:'):
+        _, _, file_id = res_txt.split(':')
+        caption = "<b>%s</b> == " % res[0]
+        if verbose:
+            caption += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
+        context.bot.send_photo(chat_id=update.effective_chat.id, photo=file_id, caption=caption, parse_mode='html')
+        return
 
-        data = shlex.split(text)
-        # remove !learn from data
-        _ = lib.pop_first(data)
+    if verbose and answer_mode == 'Markdown':
+        response += '\n_(author: %s) (%s)' % (res[2], time.ctime(int(res[1]))) + '_'
+    elif verbose:
+        response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
 
-        learn_flags = ''
-        try:
-            if data[0] == '-l':
-                if lib.is_admin(username):
-                    learn_flags = 'l'
-                _ = lib.pop_first(data)
-        except:
-            pass
+    try:
+        lib.send(update, context, response, answer_mode)
+    except Exception as ex:
+        lib.send(update, context, 'ERROR CTM! (FIXME): ' + str(ex), 'Markdown')
 
-        try:
-            if data[0] == '-f':
-                if lib.is_admin(username):
-                    lib.del_key(data[1])
-                _ = lib.pop_first(data)
-        except:
-            pass
+def _learn_text_from_message(update, context):
+    """Definition text taken from the replied message (or the message itself).
+    Returns None after replying with an error."""
+    msg = update.message
+    reply = msg.reply_to_message
+    if not reply:
+        return msg.text
 
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
-            return
-        
-        # get definition
-        try:
-            def_txt = ' '.join(data)
-        except:
-            def_txt = ''
-        
-        print(update.message)
+    if lib.is_message_text_only(reply):
+        author = reply.from_user.username or reply.from_user.first_name
+        return f'<@{author}> {reply.text}'
 
-        if def_txt == '':
-            allowed_media_types = ['photo', 'video', 'animation', 'document', 'audio', 'voice', 'video_note']
+    if lib.message_contains_media(reply):
+        # only photos can be replayed by "??" (send_photo)
+        if not reply.photo:
+            lib.send(update, context, 'Only photos can be learned.')
+            return None
+        return f'.tg_reply_to:{reply.message_id}:{reply.photo[-1].file_id}'
 
-            # Verificar si el mensaje es una respuesta a otro mensaje
-            if update.message.reply_to_message:
-                # Manejar mensajes citados
-                if lib.is_message_text_only(update.message.reply_to_message):
-                    if hasattr(update.message.reply_to_message.from_user, 'username'):
-                        _user = update.message.reply_to_message.from_user.username
-                    else:
-                        _user = update.message.reply_to_message.from_user.first_name
+    return ''
 
-                    def_txt = f'<@{_user}> {str(update.message.reply_to_message.text)}'
+def cmd_learn(update, context, username, args):
+    """!learn [-l] [-f] key [definition]   (-l lock, -f overwrite: admins only)"""
+    admin = lib.is_admin(username)
+    flags = ''
+    if args and args[0] == '-l':
+        if admin:
+            flags = 'l'
+        args = args[1:]
+    if args and args[0] == '-f':
+        if admin and len(args) > 1:
+            lib.del_key(args[1])
+        args = args[1:]
 
-                elif lib.message_contains_media(update.message.reply_to_message):
-                    # Obtener el tipo de medio actual
-                    media_type = next(media_type for media_type in allowed_media_types if hasattr(update.message.reply_to_message, media_type))
-                    print("media type:", media_type)
-                    if hasattr(update.message.reply_to_message.from_user, 'username'):
-                        _user = update.message.reply_to_message.from_user.username
-                    else:
-                        _user = update.message.reply_to_message.from_user.first_name
+    key = need_key(update, context, args)
+    if key is None:
+        return
 
-                    # Guardar la referencia del mensaje para usarla más tarde
-                    message_id = update.message.reply_to_message.message_id
-                    # Obtener el file_id de la foto
-                    file_id = update.message.reply_to_message.photo[-1].file_id
-                    def_txt = f'.tg_reply_to:{message_id}:{file_id}'
-
-            # Manejar mensajes directos con medios
-            # FIXME: No funca pq cmd viene desde text, buscar otra forma
-            elif lib.message_contains_media(update.message):
-                media_type = next(media_type for media_type in allowed_media_types if hasattr(update.message, media_type))
-                print("media type:", media_type)
-                if hasattr(update.message.from_user, 'username'):
-                    _user = update.message.from_user.username
-                else:
-                    _user = update.message.from_user.first_name
-
-                # Guardar la referencia del mensaje para usarla más tarde
-                message_id = update.message.message_id
-                # Obtener el file_id de la foto
-                file_id = update.message.photo[-1].file_id
-                def_txt = f'.tg_reply_to:{message_id}:{file_id}'
-
-            # Manejar mensajes directos que solo contienen texto
-            elif update.message.text:
-                def_txt = update.message.text
-
-            else:
-                response = 'Expected definition, found NUL.'
-                bot.send_message(chat_id=chat_id, text=response)
-                return
-            
-        try:
-            lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', learn_flags, def_txt)
-        except(sqlite3.IntegrityError):
-            response = "key *%s* already exists" % key
-            bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-            return
-        
-        if def_txt == '':
-            response = 'Learned blank entry for *%s*. (Why did you do that?)' % key
-        else:
-            response = 'Learned *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-
-    # parse "!forget key" requests
-    elif cmd == '!forget':
-        if not lib.is_learner(username):
+    def_txt = ' '.join(args[1:])
+    if def_txt == '':
+        def_txt = _learn_text_from_message(update, context)
+        if def_txt is None:
             return
 
-        data = shlex.split(text)
-        # remove !command from data
-        _ = lib.pop_first(data)
+    try:
+        lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', flags, def_txt)
+    except sqlite3.IntegrityError:
+        lib.send(update, context, "key *%s* already exists" % key, 'Markdown')
+        return
 
-        # check if force flag
-        force = False
-        if data[0] == '-f':
-            _ = lib.pop_first(data)
-            if lib.is_admin(username): force = True
+    if def_txt == '':
+        response = 'Learned blank entry for *%s*. (Why did you do that?)' % key
+    else:
+        response = 'Learned *%s*.' % key
+    lib.send(update, context, response, 'Markdown')
 
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+def cmd_forget(update, context, username, args):
+    """!forget [-f] key   (-f removes locked keys: admins only)"""
+    force = False
+    if args and args[0] == '-f':
+        args = args[1:]
+        force = lib.is_admin(username)
+
+    key = need_key(update, context, args)
+    if key is None:
+        return
+
+    if lib.is_def_locked(key) and not force:
+        lib.send(update, context, "Can't forget: Key is locked.")
+        return
+
+    lib.del_key(key)
+    lib.send(update, context, 'Removed *%s*.' % key, 'Markdown')
+
+def key_action(action, past):
+    """Command that runs action(key) and answers "<past> *key*."."""
+    def cmd(update, context, username, args):
+        key = need_key(update, context, args)
+        if key is None:
             return
-        
-        if lib.is_def_locked(key) and force == False:
-            response = 'Can\'t forget: Key is locked.'
-            bot.send_message(chat_id=chat_id, text=response)
+        action(key)
+        lib.send(update, context, '%s *%s*.' % (past, key), 'Markdown')
+    return cmd
+
+def search(finder):
+    """Command that answers with the keys matched by finder(pattern)."""
+    def cmd(update, context, username, args):
+        key = need_key(update, context, args)
+        if key is None:
             return
-        
-        lib.del_key(key)
+        total, results = finder(key)
+        lib.send(update, context, 'Matched %s key(s): %s' % (total, results))
+    return cmd
 
-        response = 'Removed *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+# first word -> (handler, who may use it: None = everybody, or a lib.is_xxx check)
+KB_COMMANDS = {
+    '??':        (cmd_query, None),
+    '!learn':    (cmd_learn, lib.is_learner),
+    '!forget':   (cmd_forget, lib.is_learner),
+    '!lock':     (key_action(lib.lock_key, 'Locked'), lib.is_admin),
+    '!unlock':   (key_action(lib.unlock_key, 'Unlocked'), lib.is_admin),
+    '!listkeys': (search(lib.find_keys), None),
+    '!find':     (search(lib.find_value), None),
+}
 
-    # parse "!lock key" requests
-    elif cmd == '!lock':
-        if not lib.is_admin(username):
+
+# --- AI ---------------------------------------------------------------------
+
+def ai_reply(update, context, text):
+    """Queue an AI answer (groups: mention or reply to the bot required; private: always if enabled)."""
+    cfg = globvars.config
+    bot = context.bot
+    msg = update.message
+    chat_key = str(update.effective_chat.id)
+    message_id = msg.message_id
+
+    # never answer the same message twice
+    responded = globvars.responded_to_message_ids.setdefault(chat_key, set())
+    if message_id in responded:
+        return
+
+    reply_msg = msg.reply_to_message
+    bot_mention = f"@{bot.username}"
+    replying_to_bot = bool(reply_msg) and reply_msg.from_user.id == bot.id
+
+    if msg.chat.type == 'private':
+        if not cfg.get('ai_enable_private', False):
             return
-
-        data = shlex.split(text)
-        # remove !command from data
-        _ = lib.pop_first(data)
-
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
-            return
-        
-        lib.lock_key(key)
-
-        response = 'Locked *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-
-    # parse "!unlock key" requests
-    elif cmd == '!unlock':
-        if not lib.is_admin(username):
-            return
-
-        data = shlex.split(text)
-        # remove !command from data
-        _ = lib.pop_first(data)
-
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
-            return
-        
-        lib.unlock_key(key)
-
-        response = 'Unlocked *%s*.' % key
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-
-    # parse "!listkeys" requests
-    elif cmd == '!listkeys':
-        data = shlex.split(text)
-        # remove !command from data
-        _ = lib.pop_first(data)
-
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
-            return
-
-        total, results = lib.find_keys(key)
-
-        response = 'Matched %s key(s): %s' % (total, results)
-        bot.send_message(chat_id=chat_id, text=response)
-
-    # parse "!find" requests
-    elif cmd == '!find':
-        data = shlex.split(text)
-        # remove !command from data
-        _ = lib.pop_first(data)
-
-        # get key
-        try:
-            key = lib.pop_first(data)
-        except:
-            bot.send_message(chat_id=chat_id, text="Expected key, found NUL.")
+    else:
+        replied_text = (reply_msg.text or reply_msg.caption or '') if reply_msg else ''
+        mentioned = bot_mention in text or bot_mention in replied_text
+        if update.effective_user.id == bot.id or not (mentioned or replying_to_bot):
             return
 
-        total, results = lib.find_value(key)
+    question = text.replace(bot_mention, '').strip()
+    if not question:
+        return
 
-        response = 'Matched %s key(s): %s' % (total, results)
-        bot.send_message(chat_id=chat_id, text=response)
+    # the last history entry is the current message, which goes separately as the query
+    history = list(globvars.chat_history.get(chat_key, []))[:-1]
+    context_messages = ai.build_context(history, cfg.get('ai_context_size', 50))
 
-    # AI handler (groups: mention required, private: auto if enabled)
-    elif ai_enabled:
-        # Determine if AI should respond
-        should_respond = False
+    if replying_to_bot:
+        context_messages.insert(0, {'author': 'You', 'text': reply_msg.text or reply_msg.caption or ''})
+        reply_to_message_id = message_id  # answer the user's message, not the bot's
+    elif reply_msg:
+        reply_to_message_id = reply_msg.message_id
+    else:
+        reply_to_message_id = None
 
-        # Initialize responded_to_message_ids if needed (chat_history already initialized above)
-        if not str(chat_id) in globvars.responded_to_message_ids:
-            globvars.responded_to_message_ids[str(chat_id)] = set()
+    if ai_worker_instance:
+        ai_worker_instance.submit(update.effective_chat.id, context_messages, question, cfg,
+                                  reply_to_message_id, message_id)
+    else:
+        logger.warning("AI worker not initialized despite ai_enabled=True")
 
-        # Get current message ID
-        message_id = update.message.message_id
 
-        # Check if we've already responded to this message (avoid duplicates)
-        already_responded = message_id in globvars.responded_to_message_ids[str(chat_id)]
+# --- entry points -------------------------------------------------------------
 
-        # Use reply_to_message for Python 3.6/older telegram library (defined for both private and group)
-        reply_msg = getattr(update.message, 'reply_to_message', getattr(update.message, 'reply_message', None))
+def proc_message(update, context):
+    msg = update.message
+    if msg is None:
+        return
 
-        if update.message.chat.type == 'private':
-            # Private chat: respond if ai_enable_private is True and not already responded
-            should_respond = ai_enable_private and not already_responded
-        else:
-            # Group chat: respond if bot is mentioned in text OR in reply OR replying to bot
-            bot_mention = f"@{bot.username}"
-            # Should respond if:
-            # 1. Bot is mentioned in the message text, OR
-            # 2. Bot is mentioned in the replied message, OR
-            # 3. User is replying directly to a bot message (no mention needed)
-            # BUT: Never respond if the message itself is from the bot (avoid self-reply loop)
-            # AND: Never respond if we've already responded to this message
-            should_respond = user_id != bot.id and not already_responded and (
-                bot_mention in text or \
-                (reply_msg and bot_mention in (reply_msg.text or reply_msg.caption or '')) or \
-                (reply_msg and reply_msg.from_user.id == bot.id)
-            )
-        
-        if should_respond:
-            # Extract question (remove bot mention if present)
-            bot_mention = f"@{bot.username}"
-            if bot_mention in text:
-                question = text.replace(bot_mention, '').strip()
-            else:
-                question = text.strip()
-            
-            if question:
-                # Get chat context
-                chat_history = globvars.chat_history.get(str(chat_id), [])
-                # Ensure ai_context_size is defined
-                if not hasattr(globvars, 'ai_context_size'):
-                    ai_context_size = 50
-                context_messages = ai.build_context(chat_history, ai_context_size)
+    user = update.effective_user
+    # Users without a username get their numeric id (unspoofable, can be listed in admins/learners)
+    username = user.username if user.username is not None else str(user.id)
+    cfg = globvars.config
 
-                # If replying to bot message, add that message to context for better relevance
-                if reply_msg and reply_msg.from_user.id == bot.id:
-                    context_msg = {
-                        'author': 'You',  # Bot
-                        'text': reply_msg.text or reply_msg.caption or ''
-                    }
-                    # Insert reply message at the beginning of context
-                    context_messages.insert(0, context_msg)
-                    # Pass message_id so bot replies to the USER's message (not the bot's)
-                    reply_to_message_id = update.message.message_id
-                elif reply_msg:
-                    # Reply to any message (not from bot)
-                    reply_to_message_id = reply_msg.message_id
-                else:
-                    reply_to_message_id = None
+    track(update, user)
 
-                # Submit to AI worker (non-blocking)
-                # Check if worker is initialized to avoid AttributeError
-                if ai_worker_instance:
-                    ai_worker_instance.submit(chat_id, context_messages, question, globvars.config, reply_to_message_id, message_id)
-                else:
-                    # Log warning if worker is None (use print to avoid logger not defined)
-                    if globvars.config and globvars.config.get('ai_enabled', False):
-                        print("WARNING: AI worker not initialized despite ai_enabled=True")
+    text = msg.text
+    if not text or not text.strip():
+        return  # not a chat message
 
-def error(bot, update, a):
-    """Log Errors caused by Updates."""
-    logger.warning('Update "%s" caused error "%s"', bot, update)
+    history = globvars.chat_history.setdefault(str(update.effective_chat.id),
+                                               deque(maxlen=cfg.get('ai_context_size', 50)))
+    history.append({'author': username, 'text': text, 'timestamp': time.time()})
+
+    entry = KB_COMMANDS.get(text.split()[0])
+    if entry:
+        handler, allowed = entry
+        if allowed is None or allowed(username):
+            handler(update, context, username, lib.parse_args(text))
+    elif cfg.get('ai_enabled', False):
+        ai_reply(update, context, text)
 
 def sig_handler(signum, frame):
     print("Saving config...")
-    from lib import globvars, lib
-    # Initialize ai_worker_instance reference (will be populated if initialized in main())
-    global ai_worker_instance
-    # Load config if not already loaded
-    if not hasattr(globvars, 'config') or globvars.config is None:
-        globvars.config = lib.load_config()
     lib.save_config(globvars.config)
     if ai_worker_instance:
         ai_worker_instance.stop()
 
 def main():
-    # Debug
-    import sys
-    print(f"DEBUG [main start]: __name__={__name__}", file=sys.stderr)
-    print(f"DEBUG [main start]: sys.argv={sys.argv}", file=sys.stderr)
-    
-    # Import modules inside main() to ensure proper initialization order
-    from lib import globvars
-    print(f"DEBUG [main import globvars]: globvars.config_file={globvars.config_file}", file=sys.stderr)
-    
-    from lib import lib
-    from lib import ai_worker
-    from lib import bot_commands
-    
-    # Parse command line arguments
+    global ai_worker_instance
+
     parser = argparse.ArgumentParser(description='Krypton Telegram Bot')
     parser.add_argument('-v', '--verbose', action='store_true',
                         help='Enable verbose/debug logging')
     parser.add_argument('--config', '-c', type=str, default='config.json',
                         help='Path to config file (default: config.json)')
     args = parser.parse_args()
-    
-    print(f"DEBUG [args]: args={args}", file=sys.stderr)
-    # Set logging level based on verbose flag
-    log_level = logging.DEBUG if args.verbose else logging.INFO
-    
-    # Enable logging
+
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-                        level=log_level)
+                        level=logging.DEBUG if args.verbose else logging.INFO)
 
-    logger = logging.getLogger(__name__)
-
-    # Set config file BEFORE importing lib
-    config_path = args.config if hasattr(args, 'config') and args.config else './config.json'
-    logger.info(f"DEBUG: Setting config_file to '{config_path}'")
-    globvars.config_file = config_path
-    
-    # Debug: check if globvars.config_file was set
-    logger.info(f"DEBUG: globvars.config_file = '{globvars.config_file}'")
-    
-    # Now load config (globvars.config_file is already set)
+    globvars.config_file = args.config
     config = lib.load_config()
-    
-    # Extract AI settings from config
-    ai_context_size = config.get('ai_context_size', 50)
-    ai_enabled = config.get('ai_enabled', False)
-    ai_enable_private = config.get('ai_enable_private', False)
-    ai_rate_limit = config.get('ai_rate_limit_seconds', 5)
-    
     lib.open_db()
-    logger.info("Using config file: %s" % globvars.config_file)
-
-    
-    # Get ai_verbose from config or args
-    ai_verbose = config.get('ai_verbose', args.verbose) if config else args.verbose
+    logger.info("Using config file: %s", globvars.config_file)
 
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
     dp = updater.dispatcher
 
-    # Initialize AI worker if enabled
-    logger.info(f"DEBUG: ai_enabled={ai_enabled}, ai_rate_limit={ai_rate_limit}, ai_verbose={ai_verbose}")
-    if ai_enabled:
-        global ai_worker_instance
-        logger.info("Initializing AI worker...")
-        ai_worker_instance = ai_worker.AIWorker(rate_limit_seconds=ai_rate_limit, verbose=ai_verbose)
+    if config.get('ai_enabled', False):
+        ai_worker_instance = ai_worker.AIWorker(
+            rate_limit_seconds=config.get('ai_rate_limit_seconds', 5),
+            verbose=config.get('ai_verbose', args.verbose))
         ai_worker_instance.start(updater.bot)
-        logger.info("AI worker initialized successfully")
+        logger.info("AI worker initialized")
     else:
         logger.warning("AI worker NOT initialized: ai_enabled=False")
 
-    # on different commands - answer in Telegram
-    dp.add_handler(CommandHandler("getcfg", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("getadmins", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("getlearners", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("addadmin", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("addlearner", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("dellearner", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("deladmin", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("reloadcfg", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("savecfg", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("getchatid", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("globvars", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("getuserid", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("kick", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("op", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("deop", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("listgroups", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("listmembers", bot_commands.proc_command))
-    dp.add_handler(CommandHandler("help", bot_commands.proc_help))
+    # /commands (declared with @command in lib/bot_commands.py)
+    for name, handler in bot_commands.COMMANDS.items():
+        dp.add_handler(CommandHandler(name, handler))
 
     # text message handler
     dp.add_handler(MessageHandler(Filters.all, proc_message))
 
-    # log all errors
-    #dp.add_error_handler(error)
-    # Start the Bot
+    # persist tracking every 5 min so a crash doesn't lose it (also saved on SIGINT/SIGTERM)
+    updater.job_queue.run_repeating(lambda ctx: lib.save_config(globvars.config), interval=300, first=300)
     updater.start_polling()
     updater.idle()
 
-
-# Global config (loaded in main())
-config = None
 
 if __name__ == '__main__':
     main()

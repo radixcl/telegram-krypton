@@ -6,14 +6,10 @@ import sqlite3
 import shlex
 import re
 
+from lib import globvars
+
 # get configuration
 def load_config():
-    # Import globvars inside function to avoid re-loading module
-    from lib import globvars
-    global config
-    # Debug
-    import sys
-    print(f"DEBUG [load_config]: globvars.config_file = {globvars.config_file}", file=sys.stderr)
     try:
         cfg = json.load(open(globvars.config_file))
     except:
@@ -24,12 +20,11 @@ def load_config():
     globvars.groups_member_track = cfg.get('groups_member_track', {})
     globvars.users_track = cfg.get('users_track', {})
 
-    config = cfg
+    globvars.config = cfg  # single source of truth for the config
     return cfg
 
 # save config to json file
 def save_config(cfg):
-    from lib import globvars
     cfg['groups_name_track'] = globvars.groups_name_track
     cfg['groups_member_track'] = globvars.groups_member_track
     cfg['users_track'] = globvars.users_track
@@ -37,16 +32,13 @@ def save_config(cfg):
     with open(globvars.config_file, 'w') as f:
         json.dump(cfg, f, indent=4)
 
-# Config and connection initialized in bot.py main()
-config = None
+# Connection initialized in bot.py main()
 c = None
 conn = None
 
-# common functions
 def open_db():
     global c, conn
-    # open database
-    db_file = config.get('database_file', 'learn.db')
+    db_file = globvars.config.get('database_file', 'learn.db')
     try:
         conn = sqlite3.connect(db_file, check_same_thread=False)
         c = conn.cursor()
@@ -56,10 +48,23 @@ def open_db():
 
 
 def is_admin(username):
-    return username in config['admins']
+    return username in globvars.config['admins']
 
 def is_learner(username):
-    return username in config['admins'] or username in config['learners']
+    return username in globvars.config['admins'] or username in globvars.config['learners']
+
+def parse_args(text):
+    """Arguments of a "!cmd a b" / "/cmd a b" message (command excluded).
+    Falls back to whitespace split on bad quoting."""
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        parts = text.split()
+    return parts[1:]
+
+def send(update, context, text, parse_mode=None):
+    """Reply in the chat the update came from."""
+    context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode=parse_mode)
 
 def get_def(key, rec=0):
 
@@ -118,13 +123,18 @@ def unlock_key(key):
     c.execute('UPDATE defs SET f = ? WHERE LOWER(k) = ?', [current_flags, key.lower()])
     conn.commit()
 
+def _like(s):
+    # only '*' is a wildcard; escape SQL's own % and _
+    s = s.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+    return s.replace('*', '%').lower()
+
 def find_keys(s):
-    s = s.replace('*', '%')
-    c.execute('SELECT COUNT(k) FROM defs WHERE LOWER(k) LIKE ?', [s.lower()])
+    s = _like(s)
+    c.execute("SELECT COUNT(k) FROM defs WHERE LOWER(k) LIKE ? ESCAPE '\\'", [s])
     res = c.fetchone()
     count = res[0]
     retval = ''
-    c.execute('SELECT k FROM defs WHERE LOWER(k) LIKE ? LIMIT 50', [s.lower()])
+    c.execute("SELECT k FROM defs WHERE LOWER(k) LIKE ? ESCAPE '\\' LIMIT 50", [s])
     res = c.fetchall()
     for k in res:
         retval += k[0] + ' '
@@ -132,23 +142,17 @@ def find_keys(s):
     return count, retval
 
 def find_value(s):
-    s = s.replace('*', '%')
-    c.execute('SELECT COUNT(k) FROM defs WHERE LOWER(d) LIKE ?', [s.lower()])
+    s = _like(s)
+    c.execute("SELECT COUNT(k) FROM defs WHERE LOWER(d) LIKE ? ESCAPE '\\'", [s])
     res = c.fetchone()
     count = res[0]
     retval = ''
-    c.execute('SELECT k FROM defs WHERE LOWER(d) LIKE ? LIMIT 50', [s.lower()])
+    c.execute("SELECT k FROM defs WHERE LOWER(d) LIKE ? ESCAPE '\\' LIMIT 50", [s])
     res = c.fetchall()
     for k in res:
         retval += k[0] + ' '
     retval = retval.strip()
     return count, retval
-
-def pop_first(l):
-    l.reverse()
-    r = l.pop()
-    l.reverse()
-    return r
 
 def is_url(text):
     regex = re.compile(
@@ -161,32 +165,11 @@ def is_url(text):
     
     return re.match(regex, text) is not None
 
-def is_message_text_only(reply):
-    if not reply:
-        return False
-
-    has_media = any([
-        reply.photo,
-        reply.video,
-        reply.animation,
-        reply.document,
-        reply.audio,
-        reply.voice,
-        reply.video_note,
-        reply.sticker,
-        reply.contact,
-        reply.location,
-        reply.venue,
-    ])
-    
-    return not has_media and reply.text is not None
-
 def message_contains_media(reply):
     if not reply:
         return False
 
-    # Verificar si el mensaje citado contiene algún tipo de medio
-    has_media = any([
+    return any([
         reply.photo,
         reply.video,
         reply.animation,
@@ -199,5 +182,6 @@ def message_contains_media(reply):
         reply.location,
         reply.venue,
     ])
-    
-    return has_media
+
+def is_message_text_only(reply):
+    return bool(reply) and not message_contains_media(reply) and reply.text is not None

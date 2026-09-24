@@ -1,453 +1,282 @@
-import shlex
+import html
 import json
-import time
 import logging
-from telegram import Update, ForceReply
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import time
+
+from lib import globvars, lib
 
 logger = logging.getLogger(__name__)
 
-# Don't load config at import time - do it when commands are called
-# This prevents globvars.config_file from being None before main() sets it
+COMMANDS = {}  # name -> telegram handler, filled by @command and registered in bot.main()
 
-def get_chat_members(bot, chat_id, limit=None):
+def command(name, private=False, admin=True):
+    """Register /name. Silently ignored unless the caller is a bot admin
+    (admin=True) and, if private=True, the chat is private.
+    The function receives (update, context, params)."""
+    def deco(fn):
+        def handler(update, context):
+            user = update.message.from_user
+            if admin and not lib.is_admin(user.username or str(user.id)):
+                return
+            if private and update.effective_chat.type != 'private':
+                return
+            fn(update, context, lib.parse_args(update.effective_message.text))
+        COMMANDS[name] = handler
+        return fn
+    return deco
+
+def get_chat_members(bot, chat_id, tracked_ids=()):
     """
-    Get members of a chat using Telegram Bot API.
-    
-    Args:
-        bot: Telegram Bot instance
-        chat_id: Chat ID
-        limit: Maximum number of members to retrieve (None = default)
-    
+    Get members of a chat. The Bot API cannot list all members, so this asks
+    for the admins plus every id we have tracked, and resolves each one.
+
     Returns:
-        List of dicts with user info
+        List of dicts with user info (users who already left are skipped)
     """
+    try:
+        ids = {a.user.id for a in bot.get_chat_administrators(chat_id)}
+    except Exception as e:
+        logger.error(f"Error getting chat administrators: {e}")
+        ids = set()
+    ids |= set(tracked_ids)
+
     members = []
-    offset = None
-    
-    while True:
+    for uid in ids:
         try:
-            if offset:
-                params = {'chat_id': chat_id, 'limit': limit, 'offset': offset}
-            else:
-                params = {'chat_id': chat_id, 'limit': limit}
-            
-            result = bot.get_chat_members(chat_id, **params)
-            
-            for member in result:
-                user_info = {
-                    'id': member.user.id,
-                    'username': member.user.username or 'No username',
-                    'first_name': member.user.first_name or '',
-                    'last_name': member.user.last_name or '',
-                    'full_name': (member.user.first_name or '') + (
-                        ' ' + (member.user.last_name or '') if member.user.last_name else ''
-                    ).strip(),
-                    'is_admin': member.status == 'administrator',
-                    'is_member': member.status in ('member', 'administrator'),
-                    'is_outside': member.status == 'kicked',
-                    'is_bot': member.user.is_bot
-                }
-                members.append(user_info)
-            
-            if not result or len(members) >= limit:
-                break
-            offset = members[-1]['id']
-            
+            member = bot.get_chat_member(chat_id, uid)
         except Exception as e:
-            logger.error(f"Error getting chat members: {e}")
-            break
-    
+            logger.debug(f"get_chat_member {uid} failed: {e}")
+            continue
+        if member.status == 'left':
+            continue
+        user = member.user
+        members.append({
+            'id': user.id,
+            'username': user.username or 'No username',
+            'full_name': ' '.join(p for p in (user.first_name, user.last_name) if p),
+            'is_admin': member.status in ('administrator', 'creator'),
+            'is_member': member.status in ('member', 'administrator', 'creator', 'restricted'),
+            'is_outside': member.status == 'kicked',
+            'is_bot': user.is_bot
+        })
     return members
 
-def proc_command(update: Update, context: CallbackContext) -> None:
-    # Import modules and load config when command is called
-    from lib import globvars
-    from lib import lib
+def redact_config(config):
+    """Copy of config with secrets masked, safe to print in a chat."""
+    return {k: ('***' if k in ('telegram_token', 'ai_api_key') else v) for k, v in config.items()}
 
-    # Use globvars.config which is loaded by bot.py
-    config = globvars.config
-    if config is None:
-        config = lib.load_config()
-        globvars.config = config
 
-    bot = context.bot
-    chat_id = update.effective_chat.id
-    chat_title = update.effective_chat.title
-    chat_type = update.effective_chat.type
-    text = update.effective_message.text
-    if update.message.from_user.username is not None:
-        username = update.message.from_user.username
-    else:
-        username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
+def _target_id(update, context, params):
+    """user id of the first param (@username) from users_track, or None after replying."""
+    if not params:
+        lib.send(update, context, 'Missing parameter')
+        return None
+    name = params[0].lstrip('@')
+    user_id = globvars.users_track.get(name)
+    if user_id is None:
+        lib.send(update, context, 'Unable to find user id for %s' % name)
+    return user_id
 
-    logger.debug(f"DEBUG proc_command: chat_id={chat_id}, chat_type={chat_type}, username={username}")
-    
+@command('reloadcfg')
+def reloadcfg(update, context, params):
+    lib.load_config()
+    lib.send(update, context, 'reloadcfg: done!')
+
+@command('savecfg')
+def savecfg(update, context, params):
+    err = None
     try:
-        command = shlex.split(text)[0]
-        params = shlex.split(text)[1:]
-    except ValueError:
-        command = text.split()[0]
-        params = text.split()[1:]
-    
-    #print("command", command)
-    #print("params", params)
+        lib.save_config(globvars.config)
+    except Exception as ex:
+        err = ex
+    lib.send(update, context, 'savecfg: FAILED!' if err else 'savecfg: done!')
+    if err and update.effective_chat.type == 'private':
+        lib.send(update, context, str(err))
 
-    if command == '/reloadcfg' and lib.is_admin(username):
-        config = lib.load_config()
-        response = 'reloadcfg: done!'
-        bot.send_message(chat_id=chat_id, text=response)
+@command('getchatid', admin=False)
+def getchatid(update, context, params):
+    lib.send(update, context, 'Chat ID: %s' % update.effective_chat.id)
+
+@command('getuserid')
+def getuserid(update, context, params):
+    if not params:
+        lib.send(update, context, 'Missing parameter')
         return
+    name = params[0].lstrip('@')
+    lib.send(update, context, 'ID for %s is: %s' % (name, globvars.users_track.get(name, 'Unknown!')))
 
-    elif command == '/savecfg' and lib.is_admin(username):
-        ex = None
-        try:
-            lib.save_config(config)
-            response = 'savecfg: done!'
-        except Exception as ex:
-            response = 'savecfg: FAILED!'
+@command('getcfg', private=True)
+def getcfg(update, context, params):
+    lib.send(update, context, '```json\n%s```' % json.dumps(redact_config(globvars.config), indent=2), 'Markdown')
 
-        bot.send_message(chat_id=chat_id, text=response)
-        if chat_type == 'private' and ex is not None:
-            bot.send_message(chat_id=chat_id, text=ex)
-        
-        return
+@command('globvars', private=True)
+def show_globvars(update, context, params):
+    items = {k: getattr(globvars, k) for k in dir(globvars) if not k.startswith('__')}
+    if items.get('config'):
+        items['config'] = redact_config(items['config'])
+    lib.send(update, context, '```json\n%s```' % json.dumps(items, indent=2, default=str), 'Markdown')
 
-    elif command == '/getuserid' and lib.is_admin(username):
-        try:
-            username = params[0]
-        except:
-            bot.send_message(chat_id=chat_id, text='Missing parameter', parse_mode='Markdown')
-            return
-        
-        if username[0] == '@': username = username[1:]
-        resp = 'ID for %s is: %s' % (username, globvars.users_track.get(username, 'Unknown!'))
-        bot.send_message(chat_id=chat_id, text=resp, parse_mode='Markdown')
-        return
+def _show(key):
+    def cmd(update, context, params):
+        lib.send(update, context, '```python\n%s```' % globvars.config.get(key), 'Markdown')
+    return cmd
 
-    elif command == '/getcfg' and lib.is_admin(username) and chat_type == 'private':
-        response = json.dumps(config, indent=2)
-        response = ("```json\n%s```" % response)
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
+def _add(key):
+    def cmd(update, context, params):
+        globvars.config.setdefault(key, []).extend(p.lstrip('@') for p in params)
+        lib.send(update, context, 'Done.')
+    return cmd
 
-    elif command == '/getadmins' and lib.is_admin(username) and chat_type == 'private':
-        response = config.get('admins')
-        response = ("```python\n%s```" % response)
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
-
-    elif command == '/addadmin' and lib.is_admin(username) and chat_type == 'private':
-        admins = config.get('admins', [])
-        for i in params:
-            if i[0] == '@': i = i[1:]   # remove @ from the username
-            admins.append(i)
-        config["admins"] = admins
-        response = "Done."
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
-
-    elif command == '/deladmin' and lib.is_admin(username) and chat_type == 'private':
-        admins = config.get('admins', [])
+def _del(key, label):
+    def cmd(update, context, params):
+        names = globvars.config.setdefault(key, [])
         response = ''
-        for i in params:
-            if i[0] == '@': i = i[1:]   # remove @ from the username
+        for p in params:
             try:
-                admins.remove(i)
+                names.remove(p.lstrip('@'))
             except ValueError:
-                response += "Admin *%s* not found.\n" % i
-                continue
-        config["admins"] = admins
-        response += "Done."
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+                response += '%s *%s* not found.\n' % (label, p.lstrip('@'))
+        lib.send(update, context, response + 'Done.', 'Markdown')
+    return cmd
 
-    elif command == '/getlearners' and lib.is_admin(username) and chat_type == 'private':
-        response = config.get('learners')
-        response = ("```python\n%s```" % response)
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
+command('getadmins', private=True)(_show('admins'))
+command('getlearners', private=True)(_show('learners'))
+command('addadmin', private=True)(_add('admins'))
+command('deladmin', private=True)(_del('admins', 'Admin'))
+command('addlearner')(_add('learners'))
+command('dellearner')(_del('learners', 'Learner'))
+
+@command('kick')
+def kick(update, context, params):
+    user_id = _target_id(update, context, params)
+    if user_id is None:
         return
+    ban_until = int(time.time())
+    try:
+        ban_until += int(params[1])  # optional ban duration in seconds
+    except (IndexError, ValueError):
+        pass
+    try:
+        context.bot.kick_chat_member(update.effective_chat.id, user_id, until_date=ban_until)
+    except Exception as ex:
+        lib.send(update, context, str(ex))
 
-    elif command == '/addlearner' and lib.is_admin(username):
-        learners = config.get('learners', [])
-        for i in params:
-            if i[0] == '@': i = i[1:]   # remove @ from the username
-            learners.append(i)
-        config["learners"] = learners
-        response = "Done."
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
-
-    elif command == '/dellearner' and lib.is_admin(username):
-        learners = config.get('learners', [])
-        response = ''
-        for i in params:
-            if i[0] == '@': i = i[1:]   # remove @ from the username
-            try:
-                learners.remove(i)
-            except ValueError:
-                response += "Learner *%s* not found.\n" % i
-                continue
-        config["learners"] = learners
-        response += "Done."
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
-
-    elif command == '/globvars' and lib.is_admin(username) and chat_type == 'private':
-        response = [(item, getattr(globvars, item)) for item in dir(globvars) if not item.startswith("__")]
-        print(response)
-        response = json.dumps(response, indent=2, default=lambda o: str(o))
-        response = ("```json\n%s```" % response)
-        bot.send_message(chat_id=chat_id, text=response, parse_mode='Markdown')
-        return
-    
-    elif command == '/kick' and lib.is_admin(username):
-        try:
-            username = params[0]
-        except:
-            bot.send_message(chat_id=chat_id, text='Missing parameter')
-            return
-        
-        # ban time
-        try:
-            ban_time = int(params[1])
-            ban_time = int(time.time()) + ban_time
-        except:
-            ban_time = int(time.time())
-        
-        if username[0] == '@': username = username[1:]
-        user_id = globvars.users_track.get(username, None)
-
+def _promote(enable):
+    def cmd(update, context, params):
+        user_id = _target_id(update, context, params)
         if user_id is None:
-            bot.send_message(chat_id=chat_id, text='Unable to find user id for %s' % username)
             return
         try:
-            bot.kick_chat_member(chat_id, user_id, None, ban_time)
-            #bot.send_message(chat_id=chat_id, text='Ban time for %s: %s' % (username, ban_time), parse_mode='Markdown')
+            context.bot.promote_chat_member(update.effective_chat.id, user_id,
+                can_change_info=enable,
+                can_invite_users=enable,
+                can_restrict_members=enable,
+                can_pin_messages=enable,
+                can_promote_members=False)
         except Exception as ex:
-            bot.send_message(chat_id=chat_id, text=str(ex), parse_mode='Markdown')
+            lib.send(update, context, str(ex))
+    return cmd
+
+command('op')(_promote(True))
+command('deop')(_promote(False))
+
+@command('listgroups', private=True)
+def listgroups(update, context, params):
+    groups = globvars.groups_name_track
+    if not groups:
+        lib.send(update, context, 'No groups found. The bot is not active in any groups yet.')
         return
 
-    elif (command == '/op' or command == '/deop') and lib.is_admin(username):
-        try:
-            username = params[0]
-        except:
-            bot.send_message(chat_id=chat_id, text='Missing parameter', parse_mode='Markdown')
-            return
+    response = '<b>📁 Groups where Krypton is active:</b>\n\n'
+    response += f'<b>Total:</b> <code>{len(groups)}</code> groups\n\n<b>List:</b>\n'
+    for i, (group_id, group_title) in enumerate(sorted(groups.items(), key=lambda x: int(x[0])), 1):
+        response += f'{i}. <code>{group_id}</code> - <b>{html.escape(group_title)}</b>\n'
+    response += '\n<b>Note:</b> This list shows groups that have been tracked since the bot started.'
+    lib.send(update, context, response, 'HTML')
 
-        if username[0] == '@': username = username[1:]
-        user_id = globvars.users_track.get(username, None)
-
-        if user_id is None:
-            bot.send_message(chat_id=chat_id, text='Unable to find user id for %s' % username, parse_mode='Markdown')
-            return
-
-        try:
-            if command == '/deop':
-                bot.promote_chat_member(chat_id, user_id,
-                    can_change_info=False,
-                    #can_post_messages=True,
-                    #can_edit_messages=False,
-                    #can_delete_messages=False,
-                    can_invite_users=False,
-                    can_restrict_members=False,
-                    can_pin_messages=False,
-                    can_promote_members=False
-                    )
-            elif command == '/op':
-                bot.promote_chat_member(chat_id, user_id,
-                    can_change_info=True,
-                    #can_post_messages=True,
-                    #can_edit_messages=False,
-                    #can_delete_messages=False,
-                    can_invite_users=True,
-                    can_restrict_members=True,
-                    can_pin_messages=True,
-                    can_promote_members=False
-                )
-        except Exception as ex:
-            bot.send_message(chat_id=chat_id, text=str(ex), parse_mode='Markdown')
+@command('listmembers', private=True)
+def listmembers(update, context, params):
+    if not params:
+        lib.send(update, context, 'Usage: /listmembers <group_name or chat_id>')
         return
 
-    elif command == '/listgroups' and lib.is_admin(username) and chat_type == 'private':
-        """List all groups where the bot is active"""
-        try:
-            # Get all tracked groups from globvars.groups_name_track
-            groups = globvars.groups_name_track
-            
-            if not groups:
-                bot.send_message(chat_id=chat_id, text='No groups found. The bot is not active in any groups yet.')
-                return
-            
-            # Format response
-            response = '<b>📁 Groups where Krypton is active:</b>\n\n'
-            response += f'<b>Total:</b> <code>{len(groups)}</code> groups\n\n'
-            response += '<b>List:</b>\n'
-            
-            # Sort by chat_id for consistency
-            sorted_groups = sorted(groups.items(), key=lambda x: int(x[0]))
-            
-            for i, (chat_id, chat_title) in enumerate(sorted_groups, 1):
-                response += f'{i}. <code>{chat_id}</code> - <b>{chat_title}</b>\n'
-            
-            # Add info about tracking
-            response += '\n<b>Note:</b> This list shows groups that have been tracked since the bot started.'
-            
-            bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
-            
-        except Exception as ex:
-            logger.error(f"Error getting listgroups: {ex}")
-            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}')
-        return
-
-    elif command == '/listmembers' and lib.is_admin(username) and chat_type == 'private':
-        if not params:
-            bot.send_message(chat_id=chat_id, text='Usage: /listmembers <group_name>')
-            return
-        
-        group_name = params[0]
-        
-        try:
-            original_chat_id_for_response = chat_id
-            logger.debug(f"DEBUG /listmembers: original_chat_id={original_chat_id_for_response}, group_name={group_name}")
-            # Search for chat by title using globvars.groups_name_track
-            chats = []
-            for tracked_chat_id, tracked_chat_title in globvars.groups_name_track.items():
-                if group_name.lower() in tracked_chat_title.lower():
-                    chats.append({
-                        'chat_id': tracked_chat_id,
-                        'chat_title': tracked_chat_title
-                    })
-            
-            if not chats:
-                bot.send_message(chat_id=original_chat_id_for_response, text=f'No chats found with name <b>{group_name}</b>')
-                return
-            
-            if len(chats) > 1:
-                bot.send_message(chat_id=original_chat_id_for_response, text=f'Found {len(chats)} matching chats:\n\n')
-                for i, c in enumerate(chats, 1):
-                    bot.send_message(chat_id=original_chat_id_for_response, text=f'{i}. <b>{c["chat_id"]}</b>: {c["chat_title"]}')
-                bot.send_message(chat_id=original_chat_id_for_response, text='\nPlease specify the exact chat_id or use one of the numbers above.')
-                return
-            
-            target_chat_id = chats[0]['chat_id']
-            target_chat_title = chats[0]['chat_title']
-
-            # Get members
-            members = get_chat_members(bot, target_chat_id)
-
-            # Format response using HTML mode (emojis work better with HTML)
-            response = f'<b>Members of {target_chat_title}</b>\n'
-            response += f'<b>Total:</b> {len(members)} members\n\n'
-            
-            # Separate by type
-            admins = [m for m in members if m['is_admin'] and not m['is_bot'] and not m['is_outside']]
-            members_only = [m for m in members if m['is_member'] and not m['is_admin'] and not m['is_bot'] and not m['is_outside']]
-            kicked = [m for m in members if m['is_outside'] and not m['is_bot']]
-            
-            if admins:
-                response += f'<b>Admins ({len(admins)}):</b>\n'
-                for m in admins[:20]:  # Limit to 20 for brevity
-                    name = m['full_name'].replace('_', ' ')
-                    username = m['username']
-                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
-                if len(admins) > 20:
-                    response += f'  ... and {len(admins) - 20} more\n'
-                response += '\n'
-            
-            if members_only:
-                response += f'<b>Members ({len(members_only)}):</b>\n'
-                for m in members_only[:20]:
-                    name = m['full_name'].replace('_', ' ')
-                    username = m['username']
-                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
-                if len(members_only) > 20:
-                    response += f'  ... and {len(members_only) - 20} more\n'
-                response += '\n'
-            
-            if kicked:
-                response += f'<b>Kicked ({len(kicked)}):</b>\n'
-                for m in kicked[:10]:
-                    name = m['full_name'].replace('_', ' ')
-                    username = m['username']
-                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
-                if len(kicked) > 10:
-                    response += f'  ... and {len(kicked) - 10} more\n'
-                response += '\n'
-            
-            # Add bots if any
-            bots = [m for m in members if m['is_bot']]
-            if bots:
-                response += f'<b>Bots ({len(bots)}):</b>\n'
-                for m in bots[:10]:
-                    name = m['full_name'].replace('_', ' ')
-                    username = m['username']
-                    response += f'  <code>{username}</code> (<b>{name}</b>)\n'
-                if len(bots) > 10:
-                    response += f'  ... and {len(bots) - 10} more\n'
-                response += '\n'
-            
-            # Send in chunks if too long
-            if len(response) > 4000:
-                # Send first part
-                bot.send_message(chat_id=chat_id, text=response[:4097], parse_mode='HTML')
-                # Send second part
-                bot.send_message(chat_id=chat_id, text=response[4097:], parse_mode='HTML')
-            else:
-                bot.send_message(chat_id=chat_id, text=response, parse_mode='HTML')
-            
-        except Exception as ex:
-            logger.error(f"Error getting listmembers: {ex}")
-            bot.send_message(chat_id=chat_id, text=f'Error: {str(ex)}')
-        return
-
-
-def proc_help(update: Update, context: CallbackContext) -> None:
-    """Send help message to admin in private chat."""
-    from lib import globvars
-    from lib import lib
-
-    # Only work in private chats
-    chat_type = update.effective_chat.type
-    if chat_type != 'private':
-        return
-
+    query = ' '.join(params)
     bot = context.bot
-    chat_id = update.effective_chat.id
 
-    # Get username
-    username = None
-    if update.message.from_user.username is not None:
-        username = update.message.from_user.username
-    else:
-        username = "%s %s" % (update.message.from_user.first_name, update.message.from_user.last_name)
-
-    # Check if user is admin
-    if not lib.is_admin(username):
-        return
-
-    # Load config
-    config = globvars.config
-    if config is None:
-        config = lib.load_config()
-        globvars.config = config
-
-    # Parse command and optional parameter
-    text = update.effective_message.text or ''
-    parts = text.split(maxsplit=1)
-    command = parts[0].lower()
-    param = parts[1].strip() if len(parts) > 1 else None
-
-    # If a command name is provided, show specific help
-    if param:
-        help_text = get_command_help(param)
-        if help_text:
-            bot.send_message(chat_id=chat_id, text=help_text, parse_mode='HTML')
+    try:
+        # exact chat_id, or case-insensitive title match
+        if query in globvars.groups_name_track:
+            chats = [(query, globvars.groups_name_track[query])]
         else:
-            bot.send_message(chat_id=chat_id, text=f"<b>❌ Comando no encontrado:</b> <code>{param}</code>\n\n<b>📚 Usa</b> <code>/help</code> <b>para ver todos los comandos disponibles.</b>", parse_mode='HTML')
-        return
+            chats = [(cid, title) for cid, title in globvars.groups_name_track.items()
+                     if query.lower() in title.lower()]
 
-    # Show general help
-    help_text = """<b>📚 Krypton Bot - Comandos Disponibles</b>
+        if not chats:
+            lib.send(update, context, f'No chats found with name <b>{html.escape(query)}</b>', 'HTML')
+            return
+
+        if len(chats) > 1:
+            lines = [f'{i}. <code>{cid}</code>: {html.escape(title)}' for i, (cid, title) in enumerate(chats, 1)]
+            lib.send(update, context, f'Found {len(chats)} matching chats:\n\n' + '\n'.join(lines) +
+                     '\n\nRepeat the command with the exact chat_id.', 'HTML')
+            return
+
+        target_chat_id, target_chat_title = chats[0]
+        tracked = globvars.groups_member_track.get(str(target_chat_id), [])
+        members = get_chat_members(bot, int(target_chat_id), tracked)
+
+        try:
+            total = bot.get_chat_member_count(int(target_chat_id))
+        except Exception:
+            total = len(members)
+
+        response = f'<b>Members of {html.escape(target_chat_title)}</b>\n'
+        response += f'<b>Total:</b> {total} (showing {len(members)} known to the bot)\n\n'
+
+        groups = [
+            ('Admins', [m for m in members if m['is_admin'] and not m['is_bot'] and not m['is_outside']], 20),
+            ('Members', [m for m in members if m['is_member'] and not m['is_admin'] and not m['is_bot']], 20),
+            ('Kicked', [m for m in members if m['is_outside'] and not m['is_bot']], 10),
+            ('Bots', [m for m in members if m['is_bot']], 10),
+        ]
+        for title, group, limit in groups:
+            if not group:
+                continue
+            response += f'<b>{title} ({len(group)}):</b>\n'
+            for m in group[:limit]:
+                response += f'  <code>{html.escape(m["username"])}</code> (<b>{html.escape(m["full_name"])}</b>)\n'
+            if len(group) > limit:
+                response += f'  ... and {len(group) - limit} more\n'
+            response += '\n'
+
+        # Telegram limit is 4096 chars; split on line boundaries so HTML tags aren't cut
+        chunk = ''
+        for line in response.splitlines(keepends=True):
+            if len(chunk) + len(line) > 4000:
+                lib.send(update, context, chunk, 'HTML')
+                chunk = ''
+            chunk += line
+        if chunk:
+            lib.send(update, context, chunk, 'HTML')
+
+    except Exception as ex:
+        logger.error(f"Error getting listmembers: {ex}")
+        lib.send(update, context, f'Error: {ex}')
+
+@command('help', private=True)
+def help_cmd(update, context, params):
+    """General help, or /help <command> for a specific one."""
+    if params:
+        param = ' '.join(params)
+        text = get_command_help(param) or (
+            f"<b>❌ Comando no encontrado:</b> <code>{html.escape(param)}</code>\n\n"
+            "<b>📚 Usa</b> <code>/help</code> <b>para ver todos los comandos disponibles.</b>")
+    else:
+        text = HELP_TEXT
+    lib.send(update, context, text, 'HTML')
+
+
+HELP_TEXT = """<b>📚 Krypton Bot - Comandos Disponibles</b>
 
 <b>Comandos de Administración:</b>
   <code>/reloadcfg</code> - Recargar configuración
@@ -473,9 +302,6 @@ def proc_help(update: Update, context: CallbackContext) -> None:
 
 <b>💡 Tip:</b> Usa <code>/help &lt;comando&gt;</code> para ver ayuda específica de un comando.
 """
-
-    bot.send_message(chat_id=chat_id, text=help_text, parse_mode='HTML')
-
 
 def get_command_help(command_name: str) -> str:
     """Get help text for a specific command."""

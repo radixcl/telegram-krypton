@@ -34,8 +34,8 @@ Keep responses concise and relevant. If the context doesn't contain relevant inf
 Format your response naturally as if you're participating in the conversation.""")
     
     # Get retry and timeout configuration
-    ai_timeout = config.get('ai_timeout', 1)  # Default: 1 second
-    ai_retries = config.get('ai_retries', 10)  # Default: 10 retries
+    ai_timeout = config.get('ai_timeout', 30)  # Default: 30 seconds (LLMs are slow)
+    ai_retries = config.get('ai_retries', 2)  # Default: 2 retries
 
     if not all([ai_url, ai_model, api_key]):
         logger.error("AI configuration incomplete")
@@ -108,6 +108,18 @@ Format your response naturally as if you're participating in the conversation.""
                 logger.error("AI API request failed after %d retries (timeout)", ai_retries)
                 return None
                 
+        except requests.exceptions.HTTPError as e:
+            # 429 = rate limited: wait (honor Retry-After, max 30s) and retry
+            if e.response is not None and e.response.status_code == 429 and attempt < ai_retries:
+                try:
+                    wait = min(float(e.response.headers.get('Retry-After', 5)), 30)
+                except ValueError:
+                    wait = 5
+                logger.warning("AI API rate limited (429), retrying in %.0fs (%d/%d)", wait, attempt + 1, ai_retries)
+                time.sleep(wait)
+                continue
+            logger.error(f"AI API request failed: {e}")
+            return None
         except requests.exceptions.RequestException as e:
             logger.error(f"AI API request failed: {e}")
             return None

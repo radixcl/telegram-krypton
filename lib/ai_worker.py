@@ -5,7 +5,9 @@ import threading
 import time
 import queue
 import logging
-from collections import deque
+from telegram.error import BadRequest
+
+from lib import ai, globvars
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,6 @@ class AIWorker:
         self.rate_limit = rate_limit_seconds
         self.queue = queue.Queue(maxsize=queue_maxsize)
         self.last_request_time = 0
-        self.lock = threading.Lock()
         self.worker_thread = None
         self.running = False
         self.bot = None
@@ -102,17 +103,13 @@ class AIWorker:
             reply_to_message_id = request.get('reply_to_message_id')
             message_id = request.get('message_id')
 
-            # Apply rate limiting
-            with self.lock:
-                elapsed = time.time() - self.last_request_time
-                if elapsed < self.rate_limit:
-                    wait_time = self.rate_limit - elapsed
-                    logger.info("Rate limiting: waiting %.1fs before AI request", wait_time)
-                    time.sleep(wait_time)
-                self.last_request_time = time.time()
-
-            # Import ai module here to avoid circular imports
-            import lib.ai as ai_module
+            # Apply rate limiting (single worker thread, no lock needed)
+            elapsed = time.time() - self.last_request_time
+            if elapsed < self.rate_limit:
+                wait_time = self.rate_limit - elapsed
+                logger.info("Rate limiting: waiting %.1fs before AI request", wait_time)
+                time.sleep(wait_time)
+            self.last_request_time = time.time()
 
             # Log context before API call (in verbose mode)
             if self.verbose:
@@ -127,7 +124,7 @@ class AIWorker:
                 logger.debug("="*60)
 
             # Call AI API
-            response_text = ai_module.call_ai_api(context_messages, query, config)
+            response_text = ai.call_ai_api(context_messages, query, config)
 
             # Send typing indicator JUST before sending response
             # This keeps the user informed that the bot is about to reply
@@ -170,21 +167,23 @@ class AIWorker:
                 text = text[1:-1].strip()
                 logger.debug(f"  Removed code block wrapping")
 
-            # Ensure text has proper newlines for Markdown parsing
-            # Telegram requires \n between block elements
-            import re
-            text = re.sub(r'\n+', '\n\n', text)
-
             logger.debug(f"  Final text (repr): {repr(text[:200])}...")
-            
-            # Send message with explicit Markdown parse mode
-            # Telegram needs this to render Markdown formatting
-            self.bot.send_message(
-                chat_id=chat_id, 
-                text=text, 
-                reply_to_message_id=reply_to_message_id,
-                parse_mode='Markdown'
-            )
+
+            # Try Markdown; LLM output often has unbalanced */_/` that Telegram
+            # rejects, so fall back to plain text instead of dropping the reply.
+            try:
+                self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=reply_to_message_id,
+                    parse_mode='Markdown'
+                )
+            except BadRequest:
+                self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_to_message_id=reply_to_message_id
+                )
             # Save bot response to chat history and mark message_id as responded_to
             self._save_bot_response(chat_id, text, message_id)
         except Exception as e:
@@ -211,22 +210,19 @@ class AIWorker:
             text: Bot's response text
             message_id: Original message ID (to mark as responded_to)
         """
-        # Import globvars to access shared state
-        import lib.globvars as globvars_module
-
         chat_id_str = str(chat_id)
 
         # Save bot response to chat history
-        if chat_id_str in globvars_module.chat_history:
+        if chat_id_str in globvars.chat_history:
             msg_record = {
                 'author': 'You',  # Bot
                 'text': text,
                 'timestamp': time.time()
             }
-            globvars_module.chat_history[chat_id_str].append(msg_record)
+            globvars.chat_history[chat_id_str].append(msg_record)
 
         # Mark message_id as responded_to (to avoid duplicate responses)
         if message_id is not None:
-            if chat_id_str not in globvars_module.responded_to_message_ids:
-                globvars_module.responded_to_message_ids[chat_id_str] = set()
-            globvars_module.responded_to_message_ids[chat_id_str].add(message_id)
+            if chat_id_str not in globvars.responded_to_message_ids:
+                globvars.responded_to_message_ids[chat_id_str] = set()
+            globvars.responded_to_message_ids[chat_id_str].add(message_id)

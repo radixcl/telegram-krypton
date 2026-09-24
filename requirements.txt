@@ -1,2 +1,6 @@
 python-telegram-bot==13.6
 requests>=2.28.0
+# PTB 13.6 needs these on modern Python:
+urllib3<2                                # PTB imports urllib3.contrib.appengine (removed in 2.x)
+setuptools<81                            # APScheduler needs pkg_resources
+standard-imghdr; python_version >= "3.13"  # imghdr was removed from the stdlib in 3.13
