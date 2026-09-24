@@ -63,7 +63,7 @@ class AIWorker:
             self.worker_thread.join(timeout=5)
         logger.info("AI worker stopped")
 
-    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None):
+    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None, user=None):
         """
         Submit an AI request to the queue.
 
@@ -74,6 +74,7 @@ class AIWorker:
             config: AI configuration
             reply_to_message_id: Optional message ID to reply to
             message_id: Original message ID (to track that we've responded to it)
+            user: Username of the asker (for reminders)
 
         Returns:
             True if request was queued, False if queue is full
@@ -85,7 +86,8 @@ class AIWorker:
                 'query': query,
                 'config': config,
                 'reply_to_message_id': reply_to_message_id,
-                'message_id': message_id
+                'message_id': message_id,
+                'user': user
             })
             # Log context in debug mode
             logger.debug("AI request queued for chat %s", chat_id)
@@ -135,7 +137,8 @@ class AIWorker:
                 logger.debug("="*60)
 
             # Call AI API
-            response_text = ai.call_ai_api(context_messages, query, config)
+            response_text = ai.call_ai_api(context_messages, query, config,
+                                           ctx={'chat_id': chat_id, 'user': request.get('user')})
 
             # Send typing indicator JUST before sending response
             # This keeps the user informed that the bot is about to reply

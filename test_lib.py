@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 from unittest import mock
 
-from lib import ai, ai_worker, globvars, lib
+from lib import ai, ai_tools, ai_worker, globvars, lib
 
 
 class LibTest(unittest.TestCase):
@@ -13,6 +13,7 @@ class LibTest(unittest.TestCase):
         lib.conn = sqlite3.connect(':memory:')
         lib.c = lib.conn.cursor()
         lib.c.execute(open('learn.db.sql').read())
+        lib.conn.execute(lib.REMINDERS_SQL)
         globvars.config = {'admins': ['adm'], 'learners': ['lrn']}
 
     def test_permissions(self):
@@ -62,18 +63,57 @@ class LibTest(unittest.TestCase):
                          [('user', 'bob: hola'), ('assistant', 'buenas')])
 
     def test_ai_tool_loop(self):
-        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_api_key': 'k', 'ai_tools_enabled': True, 'tavily_api_key': 'tk'}
-        call = {'id': 'c1', 'type': 'function', 'function': {'name': 'web_search', 'arguments': '{"query": "x"}'}}
+        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_api_key': 'k', 'ai_tools_enabled': True}
+        call = {'id': 'c1', 'type': 'function', 'function': {'name': 'calculator', 'arguments': '{"expression": "2+3*4"}'}}
         replies = [{'choices': [{'message': {'content': None, 'tool_calls': [call]}}]},
                    {'choices': [{'message': {'content': 'listo'}}]}]
-        with mock.patch.object(ai.requests, 'post') as post, \
-                mock.patch.object(ai, 'web_search', return_value='RES') as ws:
+        with mock.patch.object(ai.requests, 'post') as post:
             post.return_value.json.side_effect = replies
             self.assertEqual(ai.call_ai_api([], 'q', cfg), 'listo')
-        ws.assert_called_once_with('x', 'tk')
-        self.assertIn('tools', post.call_args_list[0].kwargs['json'])
+        names = [t['function']['name'] for t in post.call_args_list[0].kwargs['json']['tools']]
+        self.assertIn('calculator', names)
+        self.assertNotIn('web_search', names)   # no tavily key
+        self.assertNotIn('set_reminder', names)  # no chat ctx
+        first = post.call_args_list[0].kwargs['json']['messages']
+        self.assertIn('Current date and time', first[0]['content'])
         last = post.call_args_list[1].kwargs['json']['messages'][-1]
-        self.assertEqual((last['role'], last['content']), ('tool', 'RES'))
+        self.assertEqual((last['role'], last['content']), ('tool', '14'))
+
+    def test_calculator(self):
+        calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})
+        self.assertEqual(calc('(12.5+3)*4/2'), 31.0)
+        self.assertEqual(calc('-2**3'), -8)
+        for bad in ('__import__("os")', '2**999', '9**9**9', 'a+1', '1/0'):
+            with self.assertRaises(Exception):
+                calc(bad)
+
+    def test_fetch_blocks_private_and_non_http(self):
+        for url in ('http://127.0.0.1/', 'http://169.254.169.254/latest', 'http://10.0.0.5:8080/',
+                    'http://[::1]/', 'file:///etc/passwd', 'ftp://example.com/'):
+            with self.assertRaises(ValueError):
+                ai_tools._check_public(url)
+
+    def test_kb_tools(self):
+        lib.add_def('perro', 1, 'a', '', 'guau')
+        lib.add_def('gato', 1, 'a', '', 'ver perro y miau')
+        self.assertEqual(ai_tools.kb_lookup({'key': 'PERRO'}, {}, {}), 'guau')
+        self.assertEqual(ai_tools.kb_lookup({'key': 'x'}, {}, {}), 'Entry not found.')
+        out = ai_tools.kb_search({'text': 'perro'}, {}, {})
+        self.assertIn('perro', out.splitlines()[0])
+        self.assertIn('gato', out.splitlines()[1])
+
+    def test_reminders(self):
+        ctx = {'chat_id': 7, 'user': 'bob'}
+        for _ in range(ai_tools.MAX_PENDING_REMINDERS):
+            ai_tools.set_reminder({'minutes': 1, 'text': 'x'}, {}, ctx)
+        self.assertIn('Too many', ai_tools.set_reminder({'minutes': 1, 'text': 'x'}, {}, ctx))
+        with self.assertRaises(ValueError):
+            ai_tools.set_reminder({'minutes': 0, 'text': 'x'}, {}, {'chat_id': 8, 'user': 'bob'})
+        self.assertEqual(lib.pop_due_reminders(0), [])
+        due = lib.pop_due_reminders(2**40)
+        self.assertEqual(len(due), 5)
+        self.assertEqual(due[0], (7, 'bob', 'x'))
+        self.assertEqual(lib.pop_due_reminders(2**40), [])
 
     def test_add_mentions(self):
         globvars.users_track = {'GeovanniAndreotti': 1, 'radix': 2}

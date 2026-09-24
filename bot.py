@@ -268,7 +268,7 @@ def ai_reply(update, context, text):
 
     if ai_worker_instance:
         ai_worker_instance.submit(update.effective_chat.id, context_messages, question, cfg,
-                                  reply_to_message_id, message_id)
+                                  reply_to_message_id, message_id, update.effective_user.username)
     else:
         logger.warning("AI worker not initialized despite ai_enabled=True")
 
@@ -303,6 +303,14 @@ def proc_message(update, context):
             handler(update, context, username, lib.parse_args(text))
     elif cfg.get('ai_enabled', False):
         ai_reply(update, context, text)
+
+def send_due_reminders(context):
+    for chat_id, user, text in lib.pop_due_reminders(int(time.time())):
+        who = f"@{user}: " if user else ""
+        try:
+            context.bot.send_message(chat_id=chat_id, text=f"\u23f0 {who}{text}")
+        except Exception as e:
+            logger.warning("Could not send reminder to chat %s: %s", chat_id, e)
 
 def sig_handler(signum, frame):
     print("Saving config...")
@@ -349,6 +357,7 @@ def main():
 
     # persist tracking every 5 min so a crash doesn't lose it (also saved on SIGINT/SIGTERM)
     updater.job_queue.run_repeating(lambda ctx: lib.save_config(globvars.config), interval=300, first=300)
+    updater.job_queue.run_repeating(send_due_reminders, interval=30, first=10)
     updater.start_polling()
     updater.idle()
 

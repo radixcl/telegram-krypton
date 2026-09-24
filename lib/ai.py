@@ -1,42 +1,26 @@
 # AI Integration Module
 # OpenAI-compatible API client with context management
 
-import json
 import requests
 import logging
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from lib import ai_tools
 
 logger = logging.getLogger(__name__)
 
-WEB_SEARCH_TOOL = {"type": "function", "function": {
-    "name": "web_search",
-    "description": "Search the web for current information. Returns titles, URLs and snippets.",
-    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
-
-
-def web_search(query, api_key, max_results=5):
-    """Tavily search (plain REST, works on PyPy). Results are untrusted text."""
-    r = requests.post("https://api.tavily.com/search", timeout=20,
-                      headers={"Authorization": f"Bearer {api_key}"},
-                      json={"query": query, "max_results": max_results})
-    r.raise_for_status()
-    return "\n".join(f"{x['title']} - {x['url']}\n{x['content']}" for x in r.json()['results']) or "No results."
-
-
-def run_tool(call, config):
-    """Execute one tool call from the model; errors go back to the model as text."""
+def _now(config):
+    """Current date/time for the prompt (models don't know what day it is)."""
     try:
-        fn = call['function']
-        if fn['name'] != 'web_search':
-            return f"Unknown tool: {fn['name']}"
-        query = json.loads(fn['arguments'])['query']
-        logger.info("AI tool web_search: %r", query)
-        return web_search(query, config['tavily_api_key'])
-    except Exception as e:
-        logger.warning("AI tool call failed: %s", e)
-        return f"Tool error: {e}"
+        now = datetime.now(ZoneInfo(config.get('ai_timezone', 'America/Santiago')))
+    except Exception:  # no tzdata: fall back to the server's local time
+        now = datetime.now().astimezone()
+    return now.strftime('%A %Y-%m-%d %H:%M %Z')
 
-def call_ai_api(context_messages, query, config):
+
+def call_ai_api(context_messages, query, config, ctx=None):
     """
     Call OpenAI-compatible API with chat context.
 
@@ -44,6 +28,7 @@ def call_ai_api(context_messages, query, config):
         context_messages: List of dicts with 'author', 'text', 'timestamp'
         query: The user's question/message
         config: AI configuration (url, model_id, api_key, context_size)
+        ctx: who is asking ({'chat_id', 'user'}), for tools like reminders
 
     Returns:
         AI response text or None on error
@@ -72,7 +57,7 @@ Format your response naturally as if you're participating in the conversation.""
 
     # Build conversation history
     messages = [
-        {"role": "system", "content": system_prompt}
+        {"role": "system", "content": f"{system_prompt}\n\nCurrent date and time: {_now(config)}"}
     ]
 
     # Add context messages (last N messages)
@@ -94,15 +79,15 @@ Format your response naturally as if you're participating in the conversation.""
         "X-Title": "Telegram Bot"
     }
 
-    tools_on = config.get('ai_tools_enabled', False)
-    max_rounds = config.get('ai_tools_max_rounds', 2)
+    schemas = ai_tools.active_schemas(config, ctx) if config.get('ai_tools_enabled', False) else []
+    max_rounds = config.get('ai_tools_max_rounds', 3)
 
     for round_ in range(max_rounds + 1):
         payload = {"model": ai_model, "messages": messages, "max_tokens": 512, "temperature": 0.7}
-        if tools_on and round_ < max_rounds:
-            payload["tools"] = [WEB_SEARCH_TOOL]
+        if schemas and round_ < max_rounds:
+            payload["tools"] = schemas
         elif round_ > 0:  # last round: no tools, force a text answer
-            messages.append({"role": "user", "content": "No more searches available. Answer now with what you found."})
+            messages.append({"role": "user", "content": "No more tools available. Answer now with what you found."})
         message = _chat(ai_url, headers, payload, ai_timeout, ai_retries)
         if message is None:
             return None
@@ -115,7 +100,7 @@ Format your response naturally as if you're participating in the conversation.""
             return content
         messages.append(message)
         for call in calls:
-            messages.append({"role": "tool", "tool_call_id": call['id'], "content": run_tool(call, config)})
+            messages.append({"role": "tool", "tool_call_id": call['id'], "content": ai_tools.run_tool(call, config, ctx)})
     return None
 
 

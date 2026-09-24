@@ -38,15 +38,37 @@ def save_config(cfg):
 c = None
 conn = None
 
+REMINDERS_SQL = ('CREATE TABLE IF NOT EXISTS reminders '
+                 '(id INTEGER PRIMARY KEY, chat_id INTEGER, user TEXT, due INTEGER, text TEXT)')
+
 def open_db():
     global c, conn
     db_file = globvars.config.get('database_file', 'learn.db')
     try:
         conn = sqlite3.connect(db_file, check_same_thread=False)
         c = conn.cursor()
+        conn.execute(REMINDERS_SQL)
+        conn.commit()
     except:
         print('Could not open database file %s' % db_file, file=sys.stderr)
         sys.exit(1)
+
+
+# reminders use conn.execute (own cursor): called from the AI worker and the job queue threads
+def add_reminder(chat_id, user, due, text):
+    conn.execute('INSERT INTO reminders (chat_id, user, due, text) VALUES (?, ?, ?, ?)', [chat_id, user, due, text])
+    conn.commit()
+
+def count_reminders(chat_id, user):
+    return conn.execute('SELECT COUNT(*) FROM reminders WHERE chat_id = ? AND user IS ?', [chat_id, user]).fetchone()[0]
+
+def pop_due_reminders(now):
+    """Remove and return [(chat_id, user, text)] whose time has come."""
+    rows = conn.execute('SELECT id, chat_id, user, text FROM reminders WHERE due <= ?', [now]).fetchall()
+    for row in rows:
+        conn.execute('DELETE FROM reminders WHERE id = ?', [row[0]])
+    conn.commit()
+    return [row[1:] for row in rows]
 
 
 def is_admin(username):
