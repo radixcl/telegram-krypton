@@ -103,6 +103,23 @@ class LibTest(unittest.TestCase):
             out = f({'url': 'https://www.instagram.com/p/abc/'}, {}, ctx)
         self.assertTrue(out.startswith('FAILED') and 'age-restricted' in out and 'media' not in ctx)
 
+    def test_history_roundtrip(self):
+        import tempfile, os
+        from collections import deque
+        old = (lib.globvars.config_file, lib.globvars.chat_history)
+        d = tempfile.mkdtemp()
+        lib.globvars.config_file = os.path.join(d, 'c.json')
+        try:
+            lib.globvars.chat_history = {'1': deque([{'author': 'a', 'text': f'm{i}', 'timestamp': i} for i in range(5)])}
+            lib.save_history()
+            lib.globvars.chat_history = {}
+            lib.load_history(3)
+            self.assertEqual([m['text'] for m in lib.globvars.chat_history['1']], ['m2', 'm3', 'm4'])
+            os.remove(lib.globvars.config_file + '.history.json')
+            lib.load_history(3)  # missing file: no crash
+        finally:
+            lib.globvars.config_file, lib.globvars.chat_history = old
+
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})
         self.assertEqual(calc('(12.5+3)*4/2'), 31.0)

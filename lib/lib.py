@@ -2,6 +2,7 @@
 
 import sys
 import json
+import os
 import sqlite3
 import shlex
 import re
@@ -33,6 +34,26 @@ def save_config(cfg):
 
     with open(globvars.config_file, 'w') as f:
         json.dump(cfg, f, indent=4)
+
+def _history_file():
+    return globvars.config_file + '.history.json'
+
+def save_history():
+    """Dump the per-chat AI history next to the config (atomic, so a crash can't corrupt it)."""
+    data = {chat: list(msgs) for chat, msgs in list(globvars.chat_history.items())}
+    tmp = _history_file() + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(data, f)
+    os.replace(tmp, _history_file())
+
+def load_history(maxlen):
+    try:
+        with open(_history_file()) as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return  # first run or unreadable file: start empty
+    for chat, msgs in data.items():
+        globvars.chat_history[chat] = deque(msgs, maxlen=maxlen)
 
 # Connection initialized in bot.py main()
 c = None

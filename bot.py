@@ -332,6 +332,7 @@ def send_due_reminders(context):
 def sig_handler(signum, frame):
     print("Saving config...")
     lib.save_config(globvars.config)
+    lib.save_history()
     if ai_worker_instance:
         ai_worker_instance.stop()
 
@@ -351,6 +352,7 @@ def main():
     globvars.config_file = args.config
     config = lib.load_config()
     lib.open_db()
+    lib.load_history(config.get('ai_context_size', 50))
     logger.info("Using config file: %s", globvars.config_file)
 
     updater = Updater(token=config["telegram_token"], user_sig_handler=sig_handler)
@@ -374,6 +376,7 @@ def main():
 
     # persist tracking every 5 min so a crash doesn't lose it (also saved on SIGINT/SIGTERM)
     updater.job_queue.run_repeating(lambda ctx: lib.save_config(globvars.config), interval=300, first=300)
+    updater.job_queue.run_repeating(lambda ctx: lib.save_history(), interval=300, first=300)  # covers crashes
     updater.job_queue.run_repeating(send_due_reminders, interval=30, first=10)
     updater.start_polling()
     updater.idle()
