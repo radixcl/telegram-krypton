@@ -5,11 +5,22 @@ import threading
 import time
 import queue
 import logging
+import re
 from telegram.error import BadRequest
 
 from lib import ai, globvars
 
 logger = logging.getLogger(__name__)
+
+def add_mentions(text):
+    """Prefix known usernames with @ so Telegram notifies them."""
+    names = sorted(globvars.users_track, key=len, reverse=True)
+    if not names:
+        return text
+    pattern = re.compile(r'(?<![@\w])(%s)(?!\w)' % '|'.join(map(re.escape, names)), re.IGNORECASE)
+    canon = {n.lower(): n for n in names}
+    return pattern.sub(lambda m: '@' + canon[m.group(1).lower()], text)
+
 
 class AIWorker:
     """Background worker that processes AI requests with rate limiting."""
@@ -167,6 +178,7 @@ class AIWorker:
                 text = text[1:-1].strip()
                 logger.debug(f"  Removed code block wrapping")
 
+            text = add_mentions(text)
             logger.debug(f"  Final text (repr): {repr(text[:200])}...")
 
             # Try Markdown; LLM output often has unbalanced */_/` that Telegram

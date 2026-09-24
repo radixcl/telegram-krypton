@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 from unittest import mock
 
-from lib import ai, globvars, lib
+from lib import ai, ai_worker, globvars, lib
 
 
 class LibTest(unittest.TestCase):
@@ -74,6 +74,11 @@ class LibTest(unittest.TestCase):
         self.assertIn('tools', post.call_args_list[0].kwargs['json'])
         last = post.call_args_list[1].kwargs['json']['messages'][-1]
         self.assertEqual((last['role'], last['content']), ('tool', 'RES'))
+
+    def test_add_mentions(self):
+        globvars.users_track = {'GeovanniAndreotti': 1, 'radix': 2}
+        self.assertEqual(ai_worker.add_mentions('hola geovanniandreotti y @radix, radixal no'),
+                         'hola @GeovanniAndreotti y @radix, radixal no')
 
 
 if __name__ == '__main__':
