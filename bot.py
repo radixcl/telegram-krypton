@@ -293,7 +293,8 @@ def proc_message(update, context):
 
     history = globvars.chat_history.setdefault(str(update.effective_chat.id),
                                                deque(maxlen=cfg.get('ai_context_size', 50)))
-    history.append({'author': username, 'text': text, 'timestamp': time.time()})
+    # readable name for the AI context (username is only for permissions)
+    history.append({'author': user.username or user.full_name, 'text': text, 'timestamp': time.time()})
 
     entry = KB_COMMANDS.get(text.split()[0])
     if entry:
