@@ -81,14 +81,25 @@ class LibTest(unittest.TestCase):
 
     def test_instagram_preview(self):
         f = ai_tools.instagram_preview
-        self.assertEqual(f({'url': 'https://www.instagram.com/reel/AbC-d_1/?igsh=x'}, {}, {}),
-                         'https://kkinstagram.com/reel/AbC-d_1/')
-        self.assertEqual(f({'url': 'https://instagram.com/someuser/p/XyZ9/'}, {}, {}),
-                         'https://kkinstagram.com/p/XyZ9/')
         for bad in ('https://evil.com/p/abc/', 'https://instagram.com.evil.com/p/abc/',
                     'https://www.instagram.com/someuser/', 'ftp://instagram.com/p/abc/'):
             with self.assertRaises(ValueError):
                 f({'url': bad}, {}, {})
+        page = mock.Mock(text=r'"video_url\":\"https:\\\/\\\/x.fbcdn.net\\\/a.mp4?a=1\\u00262\"')
+        dl = mock.MagicMock()
+        dl.__enter__.return_value = mock.Mock(headers={'Content-Type': 'video/mp4'},
+                                              raw=mock.Mock(read=lambda n, decode_content: b'MP4'))
+        ctx = {}
+        with mock.patch.object(ai_tools.requests, 'get', side_effect=[page, dl]) as g, \
+                mock.patch.object(ai_tools, '_check_public'):
+            f({'url': 'https://www.instagram.com/reel/AbC-d_1/?igsh=x'}, {}, ctx)
+        self.assertEqual(g.call_args_list[0][0][0], 'https://www.instagram.com/reel/AbC-d_1/embed/captioned/')
+        self.assertEqual(g.call_args_list[1][0][0], 'https://x.fbcdn.net/a.mp4?a=1&2')
+        self.assertEqual(ctx['media'], [('video', b'MP4')])
+        # a media URL outside Instagram's CDN is refused
+        page = mock.Mock(text='class="EmbeddedMediaImage" alt="x" src="http://169.254.169.254/x.jpg"')
+        with mock.patch.object(ai_tools.requests, 'get', return_value=page), self.assertRaises(ValueError):
+            f({'url': 'https://www.instagram.com/p/abc/'}, {}, {})
 
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})

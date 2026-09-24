@@ -110,18 +110,43 @@ def fetch_url(args, config, ctx):
 
 
 INSTAGRAM_PATH = re.compile(r'^/(?:[\w.]+/)?(p|reel|reels|tv)/([\w-]+)')
+INSTAGRAM_CDN = ('.fbcdn.net', '.cdninstagram.com')
+MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 
 
-@tool("Instagram preview: given an instagram.com post/reel URL, returns a link that Telegram expands "
-      "into an inline image/video preview. Paste the returned link as-is in your reply.",
+@tool("Show the image/video of an instagram.com post or reel in the chat. The bot downloads it and "
+      "sends it itself; afterwards just add a short comment, without links.",
       {"url": {"type": "string"}}, ["url"])
 def instagram_preview(args, config, ctx):
     p = urlparse(args['url'].strip())
     m = INSTAGRAM_PATH.match(p.path)
     if p.scheme not in ('http', 'https') or (p.hostname or '').removeprefix('www.') != 'instagram.com' or not m:
         raise ValueError("not an instagram.com post/reel URL")
-    # ponytail: kkinstagram.com is a third-party proxy (ddinstagram died); swap the host here if it does too
-    return f"https://kkinstagram.com/{m.group(1)}/{m.group(2)}/"
+    if ctx.get('media'):
+        return "A preview is already attached."
+    # ponytail: scrapes Instagram's public embed page (no login, may change without notice).
+    # Only the first item of a carousel; no caption.
+    r = requests.get(f"https://www.instagram.com/{m.group(1)}/{m.group(2)}/embed/captioned/", timeout=15,
+                     headers={"User-Agent": "Mozilla/5.0"})
+    r.raise_for_status()
+    # video_url sits inside JSON that is itself inside a JS string: two levels of escaping
+    v = re.search(r'video_url\\":\\"(.*?)\\"', r.text)
+    i = re.search(r'class="EmbeddedMediaImage"[^>]*?src="([^"]+)"', r.text)
+    media_url = json.loads('"' + json.loads('"' + v.group(1) + '"') + '"') if v else unescape(i.group(1)) if i else ''
+    host = urlparse(media_url).hostname or ''
+    if not host.endswith(INSTAGRAM_CDN):
+        raise ValueError("could not get the media (private or removed post?)")
+    _check_public(media_url)
+    with requests.get(media_url, timeout=30, stream=True) as d:
+        d.raise_for_status()
+        kind = d.headers.get('Content-Type', '').split('/')[0]
+        if kind not in ('image', 'video'):
+            raise ValueError("unexpected media type")
+        data = d.raw.read(MAX_MEDIA_BYTES + 1, decode_content=True)
+    if len(data) > MAX_MEDIA_BYTES:
+        raise ValueError("media too large")
+    ctx.setdefault('media', []).append((kind, data))  # sent by the AI worker with the reply
+    return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent with your reply."
 
 
 # --- knowledge base (the "??" / "!find" data) -----------------------------------

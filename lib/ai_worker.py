@@ -137,8 +137,8 @@ class AIWorker:
                 logger.debug("="*60)
 
             # Call AI API
-            response_text = ai.call_ai_api(context_messages, query, config,
-                                           ctx={'chat_id': chat_id, 'user': request.get('user')})
+            ctx = {'chat_id': chat_id, 'user': request.get('user')}
+            response_text = ai.call_ai_api(context_messages, query, config, ctx=ctx)
 
             # Send typing indicator JUST before sending response
             # This keeps the user informed that the bot is about to reply
@@ -147,11 +147,24 @@ class AIWorker:
             # Small delay to ensure typing indicator is visible
             time.sleep(1)
 
+            for kind, data in ctx.get('media', []):  # e.g. instagram_preview
+                self._send_media(chat_id, kind, data, reply_to_message_id)
+
             # Send response (with reply_to_message_id if set)
             if response_text:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
                 self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)
+
+    def _send_media(self, chat_id, kind, data, reply_to_message_id=None):
+        try:
+            if kind == 'video':
+                self.bot.send_video(chat_id, data, supports_streaming=True, timeout=120,
+                                    reply_to_message_id=reply_to_message_id)
+            else:
+                self.bot.send_photo(chat_id, data, timeout=60, reply_to_message_id=reply_to_message_id)
+        except Exception as e:
+            logger.error("Failed to send AI media: %s", e)
 
     def _send_message(self, chat_id, text, reply_to_message_id=None, message_id=None):
         """Send a message through the bot."""
