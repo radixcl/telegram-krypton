@@ -1,6 +1,7 @@
 # run: python3 -m unittest
 import sqlite3
 import unittest
+from types import SimpleNamespace as NS
 
 from lib import globvars, lib
 
@@ -38,6 +39,15 @@ class LibTest(unittest.TestCase):
         self.assertEqual(lib.parse_args('!learn "a b" c'), ['a b', 'c'])
         self.assertEqual(lib.parse_args("!learn it's ok"), ["it's", 'ok'])  # bad quoting falls back
         self.assertEqual(lib.parse_args('??'), [])
+
+    def test_send_remember_records_bot_reply(self):
+        sent = []
+        ctx = NS(bot=NS(send_message=lambda **kw: sent.append(kw['text'])))
+        upd = NS(effective_chat=NS(id=5))
+        lib.send(upd, ctx, 'plain')                    # admin-style reply: not recorded
+        lib.send(upd, ctx, 'hi', remember=True)
+        self.assertEqual(sent, ['plain', 'hi'])
+        self.assertEqual([m['author'] + ':' + m['text'] for m in globvars.chat_history['5']], ['You:hi'])
 
 
 if __name__ == '__main__':

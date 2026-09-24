@@ -1,0 +1,15 @@
+# systemd --user template: one instance per config file.
+#   cp systemd/krypton-bot@.service ~/.config/systemd/user/ && systemctl --user daemon-reload
+#   systemctl --user enable --now krypton-bot@root krypton-bot@krypton   # uses root.json / krypton.json
+#   journalctl --user -u krypton-bot@root -f
+[Unit]
+Description=Krypton Telegram bot (%i)
+
+[Service]
+WorkingDirectory=%h/telegram-bots/krypton/telegram-krypton
+ExecStart=%h/telegram-bots/krypton/telegram-krypton/venv/bin/python bot.py --config %i.json
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target

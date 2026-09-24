@@ -5,6 +5,8 @@ import json
 import sqlite3
 import shlex
 import re
+import time
+from collections import deque
 
 from lib import globvars
 
@@ -62,9 +64,16 @@ def parse_args(text):
         parts = text.split()
     return parts[1:]
 
-def send(update, context, text, parse_mode=None):
-    """Reply in the chat the update came from."""
-    context.bot.send_message(chat_id=update.effective_chat.id, text=text, parse_mode=parse_mode)
+def send(update, context, text, parse_mode=None, remember=False):
+    """Reply in the chat the update came from.
+    remember=True also records the reply in the chat history the AI uses as
+    context (author 'You' = the bot)."""
+    chat_id = update.effective_chat.id
+    context.bot.send_message(chat_id=chat_id, text=text, parse_mode=parse_mode)
+    if remember:
+        size = (globvars.config or {}).get('ai_context_size', 50)
+        history = globvars.chat_history.setdefault(str(chat_id), deque(maxlen=size))
+        history.append({'author': 'You', 'text': text, 'timestamp': time.time()})
 
 def get_def(key, rec=0):
 

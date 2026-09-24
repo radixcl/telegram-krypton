@@ -59,10 +59,14 @@ def track(update, user):
 # --- knowledge base commands ("??" and "!xxx") -------------------------------
 # Each takes (update, context, username, args) where args excludes the command.
 
+def say(update, context, text, parse_mode=None):
+    """Reply and record it in the chat history, so the AI knows what the bot said."""
+    lib.send(update, context, text, parse_mode, remember=True)
+
 def need_key(update, context, args):
     """First argument, or None after replying "Expected key"."""
     if not args:
-        lib.send(update, context, "Expected key, found NUL.")
+        say(update, context, "Expected key, found NUL.")
         return None
     return args[0]
 
@@ -72,7 +76,7 @@ def cmd_query(update, context, username, args):
     if verbose:
         args = args[1:]
         if not args:
-            lib.send(update, context, "Error while parsing flags.")
+            say(update, context, "Error while parsing flags.")
             return
 
     key = need_key(update, context, args)
@@ -81,7 +85,7 @@ def cmd_query(update, context, username, args):
 
     res = lib.get_def(key)
     if res is None:
-        lib.send(update, context, "Entry *%s* not found." % key, 'Markdown')
+        say(update, context, "Entry *%s* not found." % key, 'Markdown')
         return
 
     res_txt = res[4]
@@ -108,9 +112,9 @@ def cmd_query(update, context, username, args):
         response += '\n<i>(author: %s) (%s)</i>' % (res[2], time.ctime(int(res[1])))
 
     try:
-        lib.send(update, context, response, answer_mode)
+        say(update, context, response, answer_mode)
     except Exception as ex:
-        lib.send(update, context, 'ERROR CTM! (FIXME): ' + str(ex), 'Markdown')
+        say(update, context, 'ERROR CTM! (FIXME): ' + str(ex), 'Markdown')
 
 def _learn_text_from_message(update, context):
     """Definition text taken from the replied message (or the message itself).
@@ -127,7 +131,7 @@ def _learn_text_from_message(update, context):
     if lib.message_contains_media(reply):
         # only photos can be replayed by "??" (send_photo)
         if not reply.photo:
-            lib.send(update, context, 'Only photos can be learned.')
+            say(update, context, 'Only photos can be learned.')
             return None
         return f'.tg_reply_to:{reply.message_id}:{reply.photo[-1].file_id}'
 
@@ -159,14 +163,14 @@ def cmd_learn(update, context, username, args):
     try:
         lib.add_def(key, int(time.time()), '@' + username + ' (Telegram)', flags, def_txt)
     except sqlite3.IntegrityError:
-        lib.send(update, context, "key *%s* already exists" % key, 'Markdown')
+        say(update, context, "key *%s* already exists" % key, 'Markdown')
         return
 
     if def_txt == '':
         response = 'Learned blank entry for *%s*. (Why did you do that?)' % key
     else:
         response = 'Learned *%s*.' % key
-    lib.send(update, context, response, 'Markdown')
+    say(update, context, response, 'Markdown')
 
 def cmd_forget(update, context, username, args):
     """!forget [-f] key   (-f removes locked keys: admins only)"""
@@ -180,11 +184,11 @@ def cmd_forget(update, context, username, args):
         return
 
     if lib.is_def_locked(key) and not force:
-        lib.send(update, context, "Can't forget: Key is locked.")
+        say(update, context, "Can't forget: Key is locked.")
         return
 
     lib.del_key(key)
-    lib.send(update, context, 'Removed *%s*.' % key, 'Markdown')
+    say(update, context, 'Removed *%s*.' % key, 'Markdown')
 
 def key_action(action, past):
     """Command that runs action(key) and answers "<past> *key*."."""
@@ -193,7 +197,7 @@ def key_action(action, past):
         if key is None:
             return
         action(key)
-        lib.send(update, context, '%s *%s*.' % (past, key), 'Markdown')
+        say(update, context, '%s *%s*.' % (past, key), 'Markdown')
     return cmd
 
 def search(finder):
@@ -203,7 +207,7 @@ def search(finder):
         if key is None:
             return
         total, results = finder(key)
-        lib.send(update, context, 'Matched %s key(s): %s' % (total, results))
+        say(update, context, 'Matched %s key(s): %s' % (total, results))
     return cmd
 
 # first word -> (handler, who may use it: None = everybody, or a lib.is_xxx check)
