@@ -7,6 +7,7 @@
 
 import argparse
 import logging
+import re
 import sqlite3
 import time
 from collections import deque
@@ -224,6 +225,9 @@ KB_COMMANDS = {
 
 # --- AI ---------------------------------------------------------------------
 
+INSTAGRAM_URL = re.compile(r'https?://(?:[\w-]+\.)*(?:kk|dd)?instagram\.com/\S+')
+
+
 def ai_reply(update, context, text):
     """Queue an AI answer (groups: mention or reply to the bot required; private: always if enabled)."""
     cfg = globvars.config
@@ -270,6 +274,14 @@ def ai_reply(update, context, text):
         question = f'(replying to {author}: "{quoted}" {" ".join(links)})\n{question}'
     else:
         reply_to_message_id = None
+
+    # "try the preview again": the model doesn't dig the link out of the history, so hand it over
+    if not INSTAGRAM_URL.search(question) and re.search(r'preview|instagram|reel|video|post', question, re.I):
+        for msg_ in reversed(context_messages):
+            link = INSTAGRAM_URL.search(msg_['text'])
+            if link:
+                question += f"\n(last Instagram link in this chat: {link.group(0)})"
+                break
 
     if ai_worker_instance:
         ai_worker_instance.submit(update.effective_chat.id, context_messages, question, cfg,
