@@ -263,6 +263,11 @@ def ai_reply(update, context, text):
         reply_to_message_id = message_id  # answer the user's message, not the bot's
     elif reply_msg:
         reply_to_message_id = reply_msg.message_id
+        # the model can't see which message is quoted (may be outside the context window): add it
+        quoted = reply_msg.text or reply_msg.caption or ''
+        links = [e.url for e in (reply_msg.entities or reply_msg.caption_entities or []) if e.url]
+        author = reply_msg.from_user.username or reply_msg.from_user.full_name
+        question = f'(replying to {author}: "{quoted}" {" ".join(links)})\n{question}'
     else:
         reply_to_message_id = None
 
