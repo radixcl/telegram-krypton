@@ -147,11 +147,12 @@ class AIWorker:
             # Small delay to ensure typing indicator is visible
             time.sleep(1)
 
-            for kind, data in ctx.get('media', []):  # e.g. instagram_preview
-                self._send_media(chat_id, kind, data, reply_to_message_id)
-
-            # Send response (with reply_to_message_id if set)
-            if response_text:
+            # A media request (instagram_preview) is answered with the media alone, no text
+            if ctx.get('media'):
+                for kind, data in ctx['media']:
+                    self._send_media(chat_id, kind, data, reply_to_message_id)
+                self._save_bot_response(chat_id, "(sent a media preview)", message_id)
+            elif response_text:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
                 self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)

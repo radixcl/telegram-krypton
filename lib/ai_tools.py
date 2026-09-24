@@ -115,7 +115,7 @@ MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 
 
 @tool("Show the image/video of an instagram.com post or reel in the chat. The bot downloads it and "
-      "sends it itself; afterwards just add a short comment, without links.",
+      "sends only the media as the whole answer (your text is discarded), so nothing more is needed.",
       {"url": {"type": "string"}}, ["url"])
 def instagram_preview(args, config, ctx):
     p = urlparse(args['url'].strip())
@@ -146,7 +146,7 @@ def instagram_preview(args, config, ctx):
     if len(data) > MAX_MEDIA_BYTES:
         raise ValueError("media too large")
     ctx.setdefault('media', []).append((kind, data))  # sent by the AI worker with the reply
-    return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent with your reply."
+    return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent as the whole answer. Reply just 'ok'."
 
 
 # --- knowledge base (the "??" / "!find" data) -----------------------------------
