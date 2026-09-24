@@ -126,27 +126,36 @@ def instagram_preview(args, config, ctx):
         raise ValueError("not an Instagram post/reel URL")
     if ctx.get('media'):
         return "A preview is already attached."
-    # ponytail: scrapes Instagram's public embed page (no login, may change without notice).
-    # Only the first item of a carousel; no caption.
-    r = requests.get(f"https://www.instagram.com/{m.group(1)}/{m.group(2)}/embed/captioned/", timeout=15,
-                     headers={"User-Agent": "Mozilla/5.0"})
-    r.raise_for_status()
-    # video_url sits inside JSON that is itself inside a JS string: two levels of escaping
-    v = re.search(r'video_url\\":\\"(.*?)\\"', r.text)
-    i = re.search(r'class="EmbeddedMediaImage"[^>]*?src="([^"]+)"', r.text)
-    media_url = json.loads('"' + json.loads('"' + v.group(1) + '"') + '"') if v else unescape(i.group(1)) if i else ''
-    host = urlparse(media_url).hostname or ''
-    if not host.endswith(INSTAGRAM_CDN):
-        raise ValueError("no media available: the post is private, age-restricted (needs login) or removed")
-    _check_public(media_url)
-    with requests.get(media_url, timeout=30, stream=True) as d:
-        d.raise_for_status()
-        kind = d.headers.get('Content-Type', '').split('/')[0]
-        if kind not in ('image', 'video'):
-            raise ValueError("unexpected media type")
-        data = d.raw.read(MAX_MEDIA_BYTES + 1, decode_content=True)
-    if len(data) > MAX_MEDIA_BYTES:
-        raise ValueError("media too large")
+    try:
+        # ponytail: scrapes Instagram's public embed page (no login, may change without notice).
+        # Only the first item of a carousel; no caption.
+        r = requests.get(f"https://www.instagram.com/{m.group(1)}/{m.group(2)}/embed/captioned/", timeout=15,
+                         headers={"User-Agent": "Mozilla/5.0"})
+        r.raise_for_status()
+        # video_url sits inside JSON that is itself inside a JS string: two levels of escaping
+        v = re.search(r'video_url\\":\\"(.*?)\\"', r.text)
+        i = re.search(r'class="EmbeddedMediaImage"[^>]*?src="([^"]+)"', r.text)
+        media_url = json.loads('"' + json.loads('"' + v.group(1) + '"') + '"') if v else unescape(i.group(1)) if i else ''
+        host = urlparse(media_url).hostname or ''
+        if not host.endswith(INSTAGRAM_CDN):
+            raise ValueError("no media available: the post is private, age-restricted (needs login) or removed")
+        _check_public(media_url)
+        with requests.get(media_url, timeout=30, stream=True) as d:
+            d.raise_for_status()
+            kind = d.headers.get('Content-Type', '').split('/')[0]
+            if kind not in ('image', 'video'):
+                raise ValueError("Instagram returned something that is not an image or video")
+            data = d.raw.read(MAX_MEDIA_BYTES + 1, decode_content=True)
+        if len(data) > MAX_MEDIA_BYTES:
+            raise ValueError("the media is larger than 45 MB, Telegram bots cannot send it")
+    except requests.RequestException as e:
+        reason = f"Instagram did not respond properly ({type(e).__name__})"
+    except ValueError as e:
+        reason = str(e)
+    else:
+        reason = None
+    if reason:  # the model must tell the user (no media is sent, so its text goes out)
+        return f"FAILED, no media could be sent. Tell the user you could not get this post and why: {reason}."
     ctx.setdefault('media', []).append((kind, data))  # sent by the AI worker with the reply
     return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent as the whole answer. Reply just 'ok'."
 

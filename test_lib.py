@@ -98,8 +98,10 @@ class LibTest(unittest.TestCase):
         self.assertEqual(ctx['media'], [('video', b'MP4')])
         # a media URL outside Instagram's CDN is refused
         page = mock.Mock(text='class="EmbeddedMediaImage" alt="x" src="http://169.254.169.254/x.jpg"')
-        with mock.patch.object(ai_tools.requests, 'get', return_value=page), self.assertRaises(ValueError):
-            f({'url': 'https://www.instagram.com/p/abc/'}, {}, {})
+        ctx = {}
+        with mock.patch.object(ai_tools.requests, 'get', return_value=page):
+            out = f({'url': 'https://www.instagram.com/p/abc/'}, {}, ctx)
+        self.assertTrue(out.startswith('FAILED') and 'age-restricted' in out and 'media' not in ctx)
 
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})
