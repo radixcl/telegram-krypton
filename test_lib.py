@@ -61,6 +61,20 @@ class LibTest(unittest.TestCase):
         self.assertEqual([(m['role'], m['content']) for m in msgs[1:3]],
                          [('user', 'bob: hola'), ('assistant', 'buenas')])
 
+    def test_ai_tool_loop(self):
+        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_api_key': 'k', 'ai_tools_enabled': True, 'tavily_api_key': 'tk'}
+        call = {'id': 'c1', 'type': 'function', 'function': {'name': 'web_search', 'arguments': '{"query": "x"}'}}
+        replies = [{'choices': [{'message': {'content': None, 'tool_calls': [call]}}]},
+                   {'choices': [{'message': {'content': 'listo'}}]}]
+        with mock.patch.object(ai.requests, 'post') as post, \
+                mock.patch.object(ai, 'web_search', return_value='RES') as ws:
+            post.return_value.json.side_effect = replies
+            self.assertEqual(ai.call_ai_api([], 'q', cfg), 'listo')
+        ws.assert_called_once_with('x', 'tk')
+        self.assertIn('tools', post.call_args_list[0].kwargs['json'])
+        last = post.call_args_list[1].kwargs['json']['messages'][-1]
+        self.assertEqual((last['role'], last['content']), ('tool', 'RES'))
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -1,11 +1,40 @@
 # AI Integration Module
 # OpenAI-compatible API client with context management
 
+import json
 import requests
 import logging
 import time
 
 logger = logging.getLogger(__name__)
+
+WEB_SEARCH_TOOL = {"type": "function", "function": {
+    "name": "web_search",
+    "description": "Search the web for current information. Returns titles, URLs and snippets.",
+    "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}}
+
+
+def web_search(query, api_key, max_results=5):
+    """Tavily search (plain REST, works on PyPy). Results are untrusted text."""
+    r = requests.post("https://api.tavily.com/search", timeout=20,
+                      headers={"Authorization": f"Bearer {api_key}"},
+                      json={"query": query, "max_results": max_results})
+    r.raise_for_status()
+    return "\n".join(f"{x['title']} - {x['url']}\n{x['content']}" for x in r.json()['results']) or "No results."
+
+
+def run_tool(call, config):
+    """Execute one tool call from the model; errors go back to the model as text."""
+    try:
+        fn = call['function']
+        if fn['name'] != 'web_search':
+            return f"Unknown tool: {fn['name']}"
+        query = json.loads(fn['arguments'])['query']
+        logger.info("AI tool web_search: %r", query)
+        return web_search(query, config['tavily_api_key'])
+    except Exception as e:
+        logger.warning("AI tool call failed: %s", e)
+        return f"Tool error: {e}"
 
 def call_ai_api(context_messages, query, config):
     """
@@ -65,57 +94,55 @@ Format your response naturally as if you're participating in the conversation.""
         "X-Title": "Telegram Bot"
     }
 
-    # Retry loop with short timeout
-    for attempt in range(ai_retries + 1):
-        try:
-            logger.debug("AI API request attempt %d/%d", attempt + 1, ai_retries + 1)
-            response = requests.post(
-                ai_url,
-                headers=headers,
-                json={
-                    "model": ai_model,
-                    "messages": messages,
-                    "max_tokens": 512,
-                    "temperature": 0.7
-                },
-                timeout=ai_timeout
-            )
+    tools_on = config.get('ai_tools_enabled', False)
+    max_rounds = config.get('ai_tools_max_rounds', 2)
 
+    for round_ in range(max_rounds + 1):
+        payload = {"model": ai_model, "messages": messages, "max_tokens": 512, "temperature": 0.7}
+        if tools_on and round_ < max_rounds:  # last round: no tools, force a text answer
+            payload["tools"] = [WEB_SEARCH_TOOL]
+        message = _chat(ai_url, headers, payload, ai_timeout, ai_retries)
+        if message is None:
+            return None
+        calls = message.get('tool_calls')
+        if not calls:
+            return message.get('content')
+        messages.append(message)
+        for call in calls:
+            messages.append({"role": "tool", "tool_call_id": call['id'], "content": run_tool(call, config)})
+    return None
+
+
+def _chat(url, headers, payload, timeout, retries):
+    """POST one chat completion (retries on timeout/429). Returns the message dict or None."""
+    for attempt in range(retries + 1):
+        try:
+            logger.debug("AI API request attempt %d/%d", attempt + 1, retries + 1)
+            response = requests.post(url, headers=headers, json=payload, timeout=timeout)
             response.raise_for_status()
             result = response.json()
-
-            # Extract content from response
-            if 'choices' in result and len(result['choices']) > 0:
-                content = result['choices'][0]['message']['content']
-                # Ensure proper UTF-8 encoding of the response
-                if isinstance(content, str):
-                    try:
-                        content = content.encode('utf-8').decode('utf-8')
-                    except UnicodeEncodeError:
-                        content = content.encode('utf-8', errors='replace').decode('utf-8')
-                return content
-            else:
-                logger.error(f"Unexpected AI response format: {result}")
-                return None
+            if result.get('choices'):
+                return result['choices'][0]['message']
+            logger.error(f"Unexpected AI response format: {result}")
+            return None
 
         except requests.exceptions.Timeout:
-            logger.warning("AI API request timed out (%ds)", ai_timeout)
-            if attempt < ai_retries:
-                logger.info("Retrying... (%d/%d)", attempt + 1, ai_retries)
-                time.sleep(1)  # Brief pause before retry
+            logger.warning("AI API request timed out (%ds)", timeout)
+            if attempt < retries:
+                logger.info("Retrying... (%d/%d)", attempt + 1, retries)
+                time.sleep(1)
                 continue
-            else:
-                logger.error("AI API request failed after %d retries (timeout)", ai_retries)
-                return None
-                
+            logger.error("AI API request failed after %d retries (timeout)", retries)
+            return None
+
         except requests.exceptions.HTTPError as e:
             # 429 = rate limited: wait (honor Retry-After, max 30s) and retry
-            if e.response is not None and e.response.status_code == 429 and attempt < ai_retries:
+            if e.response is not None and e.response.status_code == 429 and attempt < retries:
                 try:
                     wait = min(float(e.response.headers.get('Retry-After', 5)), 30)
                 except ValueError:
                     wait = 5
-                logger.warning("AI API rate limited (429), retrying in %.0fs (%d/%d)", wait, attempt + 1, ai_retries)
+                logger.warning("AI API rate limited (429), retrying in %.0fs (%d/%d)", wait, attempt + 1, retries)
                 time.sleep(wait)
                 continue
             logger.error(f"AI API request failed: {e}")
@@ -126,7 +153,6 @@ Format your response naturally as if you're participating in the conversation.""
         except Exception as e:
             logger.error(f"AI API error: {e}")
             return None
-    
     return None
 
 def build_context(messages_list, context_size=50):
