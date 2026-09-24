@@ -1,6 +1,7 @@
 # AI Integration Module
 # OpenAI-compatible API client with context management
 
+import re
 import requests
 import logging
 import time
@@ -10,6 +11,9 @@ from zoneinfo import ZoneInfo
 from lib import ai_tools
 
 logger = logging.getLogger(__name__)
+
+PREVIEW_ASK = re.compile(r'preview|vista previa|previsualiz', re.I)
+LINK = re.compile(r'https?://\S+')
 
 def _now(config):
     """Current date/time for the prompt (models don't know what day it is)."""
@@ -86,6 +90,9 @@ Format your response naturally as if you're participating in the conversation.""
         payload = {"model": ai_model, "messages": messages, "max_tokens": 512, "temperature": 0.7}
         if schemas and round_ < max_rounds:
             payload["tools"] = schemas
+            if round_ == 0 and PREVIEW_ASK.search(query) and LINK.search(query):
+                # small models tend to echo the URL instead of calling the tool: make them call it
+                payload["tool_choice"] = {"type": "function", "function": {"name": "link_preview"}}
         elif round_ > 0:  # last round: no tools, force a text answer
             messages.append({"role": "user", "content": "No more tools available. Answer now with what you found."})
         message = _chat(ai_url, headers, payload, ai_timeout, ai_retries)
