@@ -109,6 +109,21 @@ def fetch_url(args, config, ctx):
     return re.sub(r'\s+', ' ', unescape(text)).strip()[:4000] or "Empty page."
 
 
+INSTAGRAM_PATH = re.compile(r'^/(?:[\w.]+/)?(p|reel|reels|tv)/([\w-]+)')
+
+
+@tool("Instagram preview: given an instagram.com post/reel URL, returns a link that Telegram expands "
+      "into an inline image/video preview. Paste the returned link as-is in your reply.",
+      {"url": {"type": "string"}}, ["url"])
+def instagram_preview(args, config, ctx):
+    p = urlparse(args['url'].strip())
+    m = INSTAGRAM_PATH.match(p.path)
+    if p.scheme not in ('http', 'https') or (p.hostname or '').removeprefix('www.') != 'instagram.com' or not m:
+        raise ValueError("not an instagram.com post/reel URL")
+    # ponytail: kkinstagram.com is a third-party proxy (ddinstagram died); swap the host here if it does too
+    return f"https://kkinstagram.com/{m.group(1)}/{m.group(2)}/"
+
+
 # --- knowledge base (the "??" / "!find" data) -----------------------------------
 
 @tool("Look up an entry in the group's knowledge base (what '?? key' shows).",

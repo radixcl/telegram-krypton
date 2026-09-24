@@ -79,6 +79,17 @@ class LibTest(unittest.TestCase):
         last = post.call_args_list[1].kwargs['json']['messages'][-1]
         self.assertEqual((last['role'], last['content']), ('tool', '14'))
 
+    def test_instagram_preview(self):
+        f = ai_tools.instagram_preview
+        self.assertEqual(f({'url': 'https://www.instagram.com/reel/AbC-d_1/?igsh=x'}, {}, {}),
+                         'https://kkinstagram.com/reel/AbC-d_1/')
+        self.assertEqual(f({'url': 'https://instagram.com/someuser/p/XyZ9/'}, {}, {}),
+                         'https://kkinstagram.com/p/XyZ9/')
+        for bad in ('https://evil.com/p/abc/', 'https://instagram.com.evil.com/p/abc/',
+                    'https://www.instagram.com/someuser/', 'ftp://instagram.com/p/abc/'):
+            with self.assertRaises(ValueError):
+                f({'url': bad}, {}, {})
+
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})
         self.assertEqual(calc('(12.5+3)*4/2'), 31.0)
