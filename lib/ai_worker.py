@@ -149,23 +149,34 @@ class AIWorker:
 
             # A media request (instagram_preview) is answered with the media alone, no text
             if ctx.get('media'):
-                for kind, data in ctx['media']:
-                    self._send_media(chat_id, kind, data, reply_to_message_id)
-                self._save_bot_response(chat_id, "(sent a media preview)", message_id)
+                for kind, data, caption in ctx['media']:
+                    self._send_media(chat_id, kind, data, caption, reply_to_message_id)
+                self._save_bot_response(chat_id, ctx['media'][0][2] or "(sent a media preview)", message_id)
             elif response_text:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
                 self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)
 
-    def _send_media(self, chat_id, kind, data, reply_to_message_id=None):
+    def _send_media(self, chat_id, kind, data, caption='', reply_to_message_id=None):
+        """kind: 'video' / 'image' (data = bytes) or 'text' (a card without image). Caption is plain text."""
         try:
             if kind == 'video':
-                self.bot.send_video(chat_id, data, supports_streaming=True, timeout=120,
+                self.bot.send_video(chat_id, data, caption=caption or None, supports_streaming=True,
+                                    timeout=120, reply_to_message_id=reply_to_message_id)
+            elif kind == 'image':
+                self.bot.send_photo(chat_id, data, caption=caption or None, timeout=60,
                                     reply_to_message_id=reply_to_message_id)
             else:
-                self.bot.send_photo(chat_id, data, timeout=60, reply_to_message_id=reply_to_message_id)
+                self.bot.send_message(chat_id, caption, disable_web_page_preview=True,
+                                      reply_to_message_id=reply_to_message_id)
         except Exception as e:
             logger.error("Failed to send AI media: %s", e)
+            if kind != 'text' and caption:  # e.g. Telegram rejected the image: still show the text
+                try:
+                    self.bot.send_message(chat_id, caption, disable_web_page_preview=True,
+                                          reply_to_message_id=reply_to_message_id)
+                except Exception as e2:
+                    logger.error("Failed to send fallback text: %s", e2)
 
     def _send_message(self, chat_id, text, reply_to_message_id=None, message_id=None):
         """Send a message through the bot."""

@@ -95,7 +95,7 @@ class LibTest(unittest.TestCase):
             f({'url': 'https://www.kkinstagram.com/reel/AbC-d_1/?igsh=x'}, {}, ctx)
         self.assertEqual(g.call_args_list[0][0][0], 'https://www.instagram.com/reel/AbC-d_1/embed/captioned/')
         self.assertEqual(g.call_args_list[1][0][0], 'https://x.fbcdn.net/a.mp4?a=1&2')
-        self.assertEqual(ctx['media'], [('video', b'MP4')])
+        self.assertEqual(ctx['media'], [('video', b'MP4', '')])
         # a media URL outside Instagram's CDN is refused
         page = mock.Mock(text='class="EmbeddedMediaImage" alt="x" src="http://169.254.169.254/x.jpg"')
         ctx = {}
@@ -119,6 +119,34 @@ class LibTest(unittest.TestCase):
             lib.load_history(3)  # missing file: no crash
         finally:
             lib.globvars.config_file, lib.globvars.chat_history = old
+
+    def test_link_preview(self):
+        def resp(ctype, body):
+            return mock.Mock(is_redirect=False, headers={'Content-Type': ctype}, encoding='utf-8',
+                             raw=mock.Mock(read=lambda n, decode_content: body))
+        html = (b'<html><head><title>Fallback</title><meta property="og:title" content="Hola &amp; chao">'
+                b'<meta property="og:description" content="Una  descripcion">'
+                b'<meta property="og:image" content="/img.jpg"></head></html>')
+        ctx = {}
+        with mock.patch.object(ai_tools.requests, 'get', side_effect=[resp('text/html; charset=utf-8', html),
+                                                                      resp('image/jpeg', b'JPG')]) as g, \
+                mock.patch.object(ai_tools, '_check_public'):
+            out = ai_tools.link_preview({'url': 'https://example.com/a'}, {}, ctx)
+        self.assertEqual(g.call_args_list[1][0][0], 'https://example.com/img.jpg')
+        self.assertEqual(ctx['media'], [('image', b'JPG', 'Hola & chao\nUna descripcion\nhttps://example.com/a')])
+        # image download fails -> text card; no metadata at all -> FAILED with the reason
+        ctx = {}
+        with mock.patch.object(ai_tools.requests, 'get', side_effect=[resp('text/html', html), resp('text/plain', b'x')]), \
+                mock.patch.object(ai_tools, '_check_public'):
+            ai_tools.link_preview({'url': 'https://example.com/a'}, {}, ctx)
+        self.assertEqual(ctx['media'][0][0], 'text')
+        ctx = {}
+        with mock.patch.object(ai_tools.requests, 'get', return_value=resp('text/html', b'<html></html>')), \
+                mock.patch.object(ai_tools, '_check_public'):
+            out = ai_tools.link_preview({'url': 'https://example.com/a'}, {}, ctx)
+        self.assertTrue(out.startswith('FAILED') and 'no title' in out and 'media' not in ctx)
+        out = ai_tools.link_preview({'url': 'http://127.0.0.1/x'}, {}, {})
+        self.assertTrue(out.startswith('FAILED') and 'private' in out)
 
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})

@@ -225,7 +225,7 @@ KB_COMMANDS = {
 
 # --- AI ---------------------------------------------------------------------
 
-INSTAGRAM_URL = re.compile(r'https?://(?:[\w-]+\.)*(?:kk|dd)?instagram\.com/\S+')
+LINK = re.compile(r'https?://[^\s<>"]+')
 
 
 def ai_reply(update, context, text):
@@ -276,11 +276,11 @@ def ai_reply(update, context, text):
         reply_to_message_id = None
 
     # "try the preview again": the model doesn't dig the link out of the history, so hand it over
-    if not INSTAGRAM_URL.search(question) and re.search(r'preview|instagram|reel|video|post', question, re.I):
+    if not LINK.search(question) and re.search(r'preview|vista previa|previsualiz', question, re.I):
         for msg_ in reversed(context_messages):
-            link = INSTAGRAM_URL.search(msg_['text'])
+            link = LINK.search(msg_['text'])
             if link:
-                question += f"\n(last Instagram link in this chat: {link.group(0)})"
+                question += f"\n(last link in this chat: {link.group(0)})"
                 break
 
     if ai_worker_instance:

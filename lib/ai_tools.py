@@ -11,6 +11,7 @@ import re
 import socket
 import time
 from html import unescape
+from html.parser import HTMLParser
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -79,15 +80,12 @@ def _check_public(url):
             raise ValueError("private address blocked")
 
 
-@tool("Fetch a web page and return its text (first 4000 characters).",
-      {"url": {"type": "string"}}, ["url"])
-def fetch_url(args, config, ctx):
-    url = args['url']
+def _http_get(url, max_bytes, allowed, ua="Mozilla/5.0 (telegram-bot)"):
+    """GET with every redirect hop checked. Returns (bytes, content_type, final_url, encoding)."""
     for _ in range(4):  # follow redirects by hand so every hop is checked
         # ponytail: DNS is resolved twice (check, then connect); pin the IP if rebinding matters
         _check_public(url)
-        r = requests.get(url, timeout=10, stream=True, allow_redirects=False,
-                         headers={"User-Agent": "Mozilla/5.0 (telegram-bot)"})
+        r = requests.get(url, timeout=10, stream=True, allow_redirects=False, headers={"User-Agent": ua})
         if not r.is_redirect:
             break
         url = urljoin(url, r.headers.get('Location', ''))
@@ -97,12 +95,43 @@ def fetch_url(args, config, ctx):
     try:
         r.raise_for_status()
         ctype = r.headers.get('Content-Type', '').lower()
-        if not ctype.startswith(('text/', 'application/xhtml', 'application/json')):
-            return f"Unsupported content type: {ctype}"
-        raw = r.raw.read(200_000, decode_content=True)
+        if not ctype.startswith(allowed):
+            raise ValueError(f"unsupported content type: {ctype or 'unknown'}")
+        raw = r.raw.read(max_bytes, decode_content=True)
     finally:
         r.close()
-    text = raw.decode(r.encoding if 'charset' in ctype else 'utf-8', errors='replace')
+    return raw, ctype, url, r.encoding if 'charset' in ctype else 'utf-8'
+
+
+def _decode(raw, encoding):
+    try:
+        return raw.decode(encoding, errors='replace')
+    except LookupError:
+        return raw.decode('utf-8', errors='replace')
+
+
+def _reason(e):
+    """Human reason for a failed fetch, for the model to relay to the user."""
+    if isinstance(e, requests.HTTPError) and e.response is not None:
+        return f"the site answered HTTP {e.response.status_code}"
+    if isinstance(e, requests.Timeout):
+        return "the site took too long to respond"
+    if isinstance(e, requests.ConnectionError):
+        return "could not connect to the site"
+    if isinstance(e, requests.RequestException):
+        return f"request failed ({type(e).__name__})"
+    return str(e)
+
+
+def _failed(e):
+    return f"FAILED, no preview could be sent. Tell the user you could not get it and why: {_reason(e)}."
+
+
+@tool("Fetch a web page and return its text (first 4000 characters).",
+      {"url": {"type": "string"}}, ["url"])
+def fetch_url(args, config, ctx):
+    raw, ctype, _, enc = _http_get(args['url'], 200_000, ('text/', 'application/xhtml', 'application/json'))
+    text = _decode(raw, enc)
     if 'html' in ctype:
         text = re.sub(r'(?is)<(script|style|noscript).*?</\1>', ' ', text)
         text = re.sub(r'(?s)<[^>]+>', ' ', text)
@@ -116,9 +145,10 @@ INSTAGRAM_CDN = ('.fbcdn.net', '.cdninstagram.com')
 MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 
 
-@tool("Show the image/video of an instagram.com post or reel in the chat. The bot downloads it and "
-      "sends only the media as the whole answer (your text is discarded), so nothing more is needed.",
-      {"url": {"type": "string"}}, ["url"])
+def is_instagram(url):
+    return '.'.join((urlparse(url).hostname or '').split('.')[-2:]) in INSTAGRAM_HOSTS
+
+
 def instagram_preview(args, config, ctx):
     p = urlparse(args['url'].strip())
     m = INSTAGRAM_PATH.match(p.path)
@@ -148,16 +178,74 @@ def instagram_preview(args, config, ctx):
             data = d.raw.read(MAX_MEDIA_BYTES + 1, decode_content=True)
         if len(data) > MAX_MEDIA_BYTES:
             raise ValueError("the media is larger than 45 MB, Telegram bots cannot send it")
-    except requests.RequestException as e:
-        reason = f"Instagram did not respond properly ({type(e).__name__})"
-    except ValueError as e:
-        reason = str(e)
-    else:
-        reason = None
-    if reason:  # the model must tell the user (no media is sent, so its text goes out)
-        return f"FAILED, no media could be sent. Tell the user you could not get this post and why: {reason}."
-    ctx.setdefault('media', []).append((kind, data))  # sent by the AI worker with the reply
+    except (requests.RequestException, ValueError) as e:
+        return _failed(e)
+    ctx.setdefault('media', []).append((kind, data, ''))  # sent by the AI worker as the whole answer
     return f"Preview ({'video' if kind == 'video' else 'image'}) attached; it will be sent as the whole answer. Reply just 'ok'."
+
+
+class _Meta(HTMLParser):
+    """Collects <meta> tags (property/name -> content) and <title>."""
+    def __init__(self):
+        super().__init__()
+        self.meta, self.title, self._in_title = {}, '', False
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if tag == 'meta':
+            key = (a.get('property') or a.get('name') or '').lower()
+            if key and a.get('content') and key not in self.meta:
+                self.meta[key] = a['content'].strip()
+        elif tag == 'title':
+            self._in_title = True
+
+    def handle_endtag(self, tag):
+        if tag == 'title':
+            self._in_title = False
+
+    def handle_data(self, data):
+        if self._in_title:
+            self.title += data
+
+
+TELEGRAM_UA = "TelegramBot (like TwitterBot)"  # sites serve their Open Graph tags to it
+MAX_PHOTO_BYTES = 8_000_000
+
+
+@tool("Show a preview of any URL in the chat: image + title + description for web pages, the photo/video "
+      "for Instagram posts and reels. The bot builds and sends it itself as the whole answer (your text is "
+      "discarded), so nothing more is needed. Use it when the user asks for a link/URL preview.",
+      {"url": {"type": "string"}}, ["url"])
+def link_preview(args, config, ctx):
+    url = args['url'].strip()
+    if ctx.get('media'):
+        return "A preview is already attached."
+    if is_instagram(url):
+        return instagram_preview(args, config, ctx)
+    try:
+        raw, _, final, enc = _http_get(url, 300_000, ('text/html', 'application/xhtml'), TELEGRAM_UA)
+        page = _Meta()
+        page.feed(_decode(raw, enc))
+        m = page.meta
+        title = m.get('og:title') or m.get('twitter:title') or page.title.strip()
+        desc = m.get('og:description') or m.get('twitter:description') or m.get('description', '')
+        image = m.get('og:image') or m.get('twitter:image')
+        if not (title or desc or image):
+            raise ValueError("the page has no title, description or image to preview "
+                             "(it may need JavaScript or a login)")
+        caption = "\n".join(x for x in (re.sub(r'\s+', ' ', title), re.sub(r'\s+', ' ', desc)[:500], final) if x)[:1000]
+        data = None
+        if image:
+            try:  # a missing image is not fatal: fall back to a text card
+                data, ctype, _, _ = _http_get(urljoin(final, image), MAX_PHOTO_BYTES, ('image/',), TELEGRAM_UA)
+                if 'svg' in ctype:
+                    data = None
+            except (requests.RequestException, ValueError):
+                data = None
+    except (requests.RequestException, ValueError) as e:
+        return _failed(e)
+    ctx.setdefault('media', []).append(('image', data, caption) if data else ('text', None, caption))
+    return "Preview attached; it will be sent as the whole answer. Reply just 'ok'."
 
 
 # --- knowledge base (the "??" / "!find" data) -----------------------------------
