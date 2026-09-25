@@ -1,6 +1,7 @@
 # AI Integration Module
 # OpenAI-compatible API client with context management
 
+import json
 import re
 import requests
 import logging
@@ -86,13 +87,19 @@ Format your response naturally as if you're participating in the conversation.""
     schemas = ai_tools.active_schemas(config, ctx) if config.get('ai_tools_enabled', False) else []
     max_rounds = config.get('ai_tools_max_rounds', 3)
 
+    if schemas and ctx is not None and PREVIEW_ASK.search(query) and LINK.search(query):
+        # small models echo the URL or write the call as text: don't leave it to them
+        url = LINK.findall(query)[-1].rstrip(')>"\'.,')
+        out = ai_tools.run_tool({'function': {'name': 'link_preview', 'arguments': json.dumps({'url': url})}}, config, ctx)
+        if ctx.get('media'):
+            return 'ok'
+        messages.append({"role": "user", "content": f"[system] {out}"})
+        schemas = []  # only explain the failure
+
     for round_ in range(max_rounds + 1):
         payload = {"model": ai_model, "messages": messages, "max_tokens": 512, "temperature": 0.7}
         if schemas and round_ < max_rounds:
             payload["tools"] = schemas
-            if round_ == 0 and PREVIEW_ASK.search(query) and LINK.search(query):
-                # small models tend to echo the URL instead of calling the tool: make them call it
-                payload["tool_choice"] = {"type": "function", "function": {"name": "link_preview"}}
         elif round_ > 0:  # last round: no tools, force a text answer
             messages.append({"role": "user", "content": "No more tools available. Answer now with what you found."})
         message = _chat(ai_url, headers, payload, ai_timeout, ai_retries)

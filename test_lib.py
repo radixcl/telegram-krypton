@@ -79,6 +79,18 @@ class LibTest(unittest.TestCase):
         last = post.call_args_list[1].kwargs['json']['messages'][-1]
         self.assertEqual((last['role'], last['content']), ('tool', '14'))
 
+    def test_preview_request_skips_model(self):
+        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_api_key': 'k', 'ai_tools_enabled': True}
+        def fake(args, config, ctx):
+            ctx['media'] = [('text', None, args['url'])]
+            return 'x'
+        with mock.patch.object(ai.requests, 'post') as post, \
+                mock.patch.dict(ai_tools.TOOLS, {'link_preview': (ai_tools.TOOLS['link_preview'][0], fake)}):
+            ctx = {'chat_id': 1, 'user': 'a'}
+            self.assertEqual(ai.call_ai_api([], 'preview https://a.com/x?y=1', cfg, ctx=ctx), 'ok')
+        post.assert_not_called()
+        self.assertEqual(ctx['media'][0][2], 'https://a.com/x?y=1')
+
     def test_instagram_preview(self):
         f = ai_tools.instagram_preview
         for bad in ('https://evil.com/p/abc/', 'https://instagram.com.evil.com/p/abc/',
