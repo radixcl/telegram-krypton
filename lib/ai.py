@@ -143,7 +143,7 @@ def _chat(url, headers, payload, timeout, retries):
                 logger.warning("AI API rate limited (429), retrying in %.0fs (%d/%d)", wait, attempt + 1, retries)
                 time.sleep(wait)
                 continue
-            logger.error(f"AI API request failed: {e}")
+            logger.error(f"AI API request failed: {e} {e.response.text[:300] if e.response is not None else ''}")
             return None
         except requests.exceptions.RequestException as e:
             logger.error(f"AI API request failed: {e}")
