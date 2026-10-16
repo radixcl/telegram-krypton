@@ -226,6 +226,19 @@ KB_COMMANDS = {
 # --- AI ---------------------------------------------------------------------
 
 LINK = re.compile(r'https?://[^\s<>"]+')
+IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/webp', 'image/gif')
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # per-image limit of most vision APIs
+
+
+def image_refs(message):
+    """[(file_id, mime_type)] of the image in a message (photo or image sent as a file)."""
+    if message.photo:  # several sizes, smallest first
+        fitting = [p for p in message.photo if (p.file_size or 0) <= MAX_IMAGE_BYTES]
+        return [(fitting[-1].file_id, 'image/jpeg')] if fitting else []
+    doc = message.document
+    if doc and doc.mime_type in IMAGE_TYPES and (doc.file_size or 0) <= MAX_IMAGE_BYTES:
+        return [(doc.file_id, doc.mime_type)]
+    return []
 
 
 def ai_reply(update, context, text):
@@ -254,9 +267,13 @@ def ai_reply(update, context, text):
         if update.effective_user.id == bot.id or not (mentioned or replying_to_bot):
             return
 
+    images = image_refs(msg) + (image_refs(reply_msg) if reply_msg else [])
     question = text.replace(bot_mention, '').strip()
     if not question:
-        return
+        # bare image (private) or bare mention replying to one; in an album only the captioned photo counts
+        if not images or msg.media_group_id:
+            return
+        question = "(no comment, just the image: describe it or react to it)"
 
     # the last history entry is the current message, which goes separately as the query
     history = list(globvars.chat_history.get(chat_key, []))[:-1]
@@ -285,7 +302,7 @@ def ai_reply(update, context, text):
 
     if ai_worker_instance:
         ai_worker_instance.submit(update.effective_chat.id, context_messages, question, cfg,
-                                  reply_to_message_id, message_id, update.effective_user.username)
+                                  reply_to_message_id, message_id, update.effective_user.username, images)
     else:
         logger.warning("AI worker not initialized despite ai_enabled=True")
 
@@ -304,16 +321,18 @@ def proc_message(update, context):
 
     track(update, user)
 
-    text = msg.text
-    if not text or not text.strip():
+    has_image = bool(image_refs(msg))
+    text = (msg.caption or '') if has_image else msg.text
+    if not has_image and (not text or not text.strip()):
         return  # not a chat message
 
     history = globvars.chat_history.setdefault(str(update.effective_chat.id),
                                                deque(maxlen=cfg.get('ai_context_size', 50)))
-    # readable name for the AI context (username is only for permissions)
-    history.append({'author': user.username or user.full_name, 'text': text, 'timestamp': time.time()})
+    # readable name for the AI context (username is only for permissions); images stay out of the history
+    logged = f'[image] {text}'.strip() if has_image else text
+    history.append({'author': user.username or user.full_name, 'text': logged, 'timestamp': time.time()})
 
-    entry = KB_COMMANDS.get(text.split()[0])
+    entry = KB_COMMANDS.get(text.split()[0]) if msg.text else None  # captions are never commands
     if entry:
         handler, allowed = entry
         if allowed is None or allowed(username):

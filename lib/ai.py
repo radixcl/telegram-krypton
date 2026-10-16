@@ -25,7 +25,7 @@ def _now(config):
     return now.strftime('%A %Y-%m-%d %H:%M %Z')
 
 
-def call_ai_api(context_messages, query, config, ctx=None):
+def call_ai_api(context_messages, query, config, ctx=None, images=None):
     """
     Call OpenAI-compatible API with chat context.
 
@@ -34,6 +34,7 @@ def call_ai_api(context_messages, query, config, ctx=None):
         query: The user's question/message
         config: AI configuration (url, model_id, api_key, context_size)
         ctx: who is asking ({'chat_id', 'user'}), for tools like reminders
+        images: data: URLs of images attached to the query (needs a vision model)
 
     Returns:
         AI response text or None on error
@@ -45,6 +46,8 @@ def call_ai_api(context_messages, query, config, ctx=None):
 
     ai_url = config.get('ai_api_url')
     ai_model = config.get('ai_model_id')
+    if images:  # the default model may be text-only
+        ai_model = config.get('ai_vision_model_id') or ai_model
     api_key = config.get('ai_api_key')
     system_prompt = config.get('ai_system_prompt', """You are a helpful AI assistant. Answer the user's question based on the conversation context provided.
 
@@ -74,7 +77,12 @@ Format your response naturally as if you're participating in the conversation.""
             messages.append({"role": "user", "content": f"{msg['author']}: {msg['text']}"})
 
     # Add the current query
-    messages.append({"role": "user", "content": query})
+    if images:
+        content = [{"type": "text", "text": query}]
+        content += [{"type": "image_url", "image_url": {"url": url}} for url in images]
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": query})
 
     # Build headers (OpenRouter requires additional headers)
     headers = {

@@ -201,6 +201,49 @@ class LibTest(unittest.TestCase):
         self.assertEqual(ai_worker.add_mentions('hola geovanniandreotti y @radix, radixal no'),
                          'hola @GeovanniAndreotti y @radix, radixal no')
 
+    def test_ai_images_use_vision_model(self):
+        cfg = {'ai_api_url': 'u', 'ai_model_id': 'm', 'ai_vision_model_id': 'vl', 'ai_api_key': 'k'}
+        with mock.patch.object(ai.requests, 'post') as post:
+            post.return_value.json.return_value = {'choices': [{'message': {'content': 'un gato'}}]}
+            self.assertEqual(ai.call_ai_api([], 'qué es?', cfg, images=['data:image/jpeg;base64,AA==']), 'un gato')
+            payload = post.call_args.kwargs['json']
+            self.assertEqual(payload['model'], 'vl')
+            self.assertEqual(payload['messages'][-1]['content'],
+                             [{'type': 'text', 'text': 'qué es?'},
+                              {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,AA=='}}])
+            ai.call_ai_api([], 'hola', cfg)
+            self.assertEqual(post.call_args.kwargs['json']['model'], 'm')   # no image: default model
+
+    def test_worker_downloads_images(self):
+        w = ai_worker.AIWorker()
+        w.bot = mock.Mock()
+        w.bot.get_file.side_effect = [mock.Mock(download_as_bytearray=lambda: bytearray(b'PNG')), Exception('gone')]
+        self.assertEqual(w._download_images([('a', 'image/png'), ('b', 'image/jpeg')]),
+                         ['data:image/png;base64,UE5H'])
+
+    def test_bot_image_messages(self):
+        import bot
+        photo = lambda fid, size: NS(file_id=fid, file_size=size)
+        msg = NS(photo=[photo('s', 10), photo('m', 100), photo('huge', bot.MAX_IMAGE_BYTES + 1)], document=None)
+        self.assertEqual(bot.image_refs(msg), [('m', 'image/jpeg')])
+        doc = lambda mime: NS(photo=[], document=NS(file_id='d', mime_type=mime, file_size=10))
+        self.assertEqual(bot.image_refs(doc('image/png')), [('d', 'image/png')])
+        self.assertEqual(bot.image_refs(doc('application/pdf')), [])
+
+        # private photo without caption: recorded in history and sent to the AI with the image
+        globvars.config = {'ai_enabled': True, 'ai_enable_private': True}
+        self.addCleanup(globvars.chat_history.pop, '77', None)
+        user = NS(id=1, username='bob', full_name='Bob')
+        msg = NS(photo=[photo('p', 10)], document=None, caption=None, text=None, message_id=9,
+                 reply_to_message=None, media_group_id=None, chat=NS(type='private'),
+                 new_chat_members=[], left_chat_member=None)
+        upd = NS(message=msg, effective_user=user, effective_chat=NS(id=77, type='private', title=None))
+        worker = mock.Mock()
+        with mock.patch.object(bot, 'ai_worker_instance', worker):
+            bot.proc_message(upd, NS(bot=NS(id=99, username='kbot')))
+        self.assertEqual(globvars.chat_history['77'][-1]['text'], '[image]')
+        self.assertEqual(worker.submit.call_args.args[-1], [('p', 'image/jpeg')])
+
 
 if __name__ == '__main__':
     unittest.main()
