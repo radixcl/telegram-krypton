@@ -5,6 +5,7 @@
     "learners": ["learner1", "learner2"],
     "ai_api_url": "https://openrouter.ai/api/v1/chat/completions",
     "ai_model_id": "nvidia/nemotron-3-super-120b-a12b:free",
+    "ai_vision_model_id": "nvidia/nemotron-3.5-super-vl:free",
     "ai_api_key": "YOUR_OPENROUTER_API_KEY",
     "ai_context_size": 50,
     "ai_enabled": true,

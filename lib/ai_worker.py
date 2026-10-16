@@ -1,6 +1,7 @@
 # AI Worker Module
 # Background thread for non-blocking AI API calls with rate limiting
 
+import base64
 import threading
 import time
 import queue
@@ -63,7 +64,8 @@ class AIWorker:
             self.worker_thread.join(timeout=5)
         logger.info("AI worker stopped")
 
-    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None, user=None):
+    def submit(self, chat_id, context_messages, query, config, reply_to_message_id=None, message_id=None, user=None,
+               images=None):
         """
         Submit an AI request to the queue.
 
@@ -75,6 +77,7 @@ class AIWorker:
             reply_to_message_id: Optional message ID to reply to
             message_id: Original message ID (to track that we've responded to it)
             user: Username of the asker (for reminders)
+            images: (file_id, mime_type) of Telegram images to show the model
 
         Returns:
             True if request was queued, False if queue is full
@@ -87,7 +90,8 @@ class AIWorker:
                 'config': config,
                 'reply_to_message_id': reply_to_message_id,
                 'message_id': message_id,
-                'user': user
+                'user': user,
+                'images': images or []
             })
             # Log context in debug mode
             logger.debug("AI request queued for chat %s", chat_id)
@@ -138,7 +142,11 @@ class AIWorker:
 
             # Call AI API
             ctx = {'chat_id': chat_id, 'user': request.get('user')}
-            response_text = ai.call_ai_api(context_messages, query, config, ctx=ctx)
+            images = self._download_images(request.get('images'))
+            if request.get('images') and not images:
+                self._send_message(chat_id, "Sorry, I couldn't download the image.", reply_to_message_id, message_id)
+                continue
+            response_text = ai.call_ai_api(context_messages, query, config, ctx=ctx, images=images)
 
             # Send typing indicator JUST before sending response
             # This keeps the user informed that the bot is about to reply
@@ -156,6 +164,18 @@ class AIWorker:
                 self._send_message(chat_id, response_text, reply_to_message_id, message_id)
             else:
                 self._send_message(chat_id, "Sorry, I couldn't process that request.", reply_to_message_id, message_id)
+
+    def _download_images(self, refs):
+        """Telegram (file_id, mime_type) -> data: URLs for the model. Failed downloads are skipped."""
+        urls = []
+        for file_id, mime in refs or []:
+            try:
+                data = self.bot.get_file(file_id).download_as_bytearray()
+            except Exception as e:
+                logger.error("Failed to download image %s: %s", file_id, e)
+                continue
+            urls.append(f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}")
+        return urls
 
     def _send_media(self, chat_id, kind, data, caption='', reply_to_message_id=None):
         """kind: 'video' / 'image' (data = bytes) or 'text' (a card without image). Caption is plain text."""
