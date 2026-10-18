@@ -365,6 +365,21 @@ class LibTest(unittest.TestCase):
             bot_commands.COMMANDS['loginchatgpt'](update, NS())
         done.assert_called_once()
 
+    def test_help_covers_registered_and_knowledge_commands(self):
+        for name in bot_commands.COMMANDS:
+            with self.subTest(command=name):
+                self.assertIsNotNone(bot_commands.get_command_help(name))
+                self.assertIn('/' + name, bot_commands.HELP_TEXT)
+
+        for name in bot_commands.KB_COMMAND_HELP:
+            with self.subTest(command=name):
+                self.assertIsNotNone(bot_commands.get_command_help(name))
+                self.assertIn(name, bot_commands.HELP_TEXT)
+
+        self.assertIn('[-f]', bot_commands.get_command_help('!forget'))
+        self.assertIn('solo en privado', bot_commands.get_command_help('/setcfg').lower())
+        self.assertIsNone(bot_commands.get_command_help('not-a-command'))
+
     def test_worker_downloads_images(self):
         w = ai_worker.AIWorker()
         w.bot = mock.Mock()

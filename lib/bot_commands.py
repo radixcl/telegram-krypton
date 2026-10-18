@@ -9,6 +9,7 @@ from lib import chatgpt, globvars, lib
 logger = logging.getLogger(__name__)
 
 COMMANDS = {}  # name -> telegram handler, filled by @command and registered in bot.main()
+COMMAND_POLICIES = {}  # name -> (admin-only, private-chat-only)
 
 def command(name, private=False, admin=True):
     """Register /name. Silently ignored unless the caller is a bot admin
@@ -23,6 +24,7 @@ def command(name, private=False, admin=True):
                 return
             fn(update, context, lib.parse_args(update.effective_message.text))
         COMMANDS[name] = handler
+        COMMAND_POLICIES[name] = (admin, private)
         return fn
     return deco
 
@@ -329,7 +331,7 @@ def listmembers(update, context, params):
 
 @command('help', private=True)
 def help_cmd(update, context, params):
-    """General help, or /help <command> for a specific one."""
+    """Show admin command help, or details for one command."""
     if params:
         param = ' '.join(params)
         text = get_command_help(param) or (
@@ -340,251 +342,102 @@ def help_cmd(update, context, params):
     lib.send(update, context, text, 'HTML')
 
 
-HELP_TEXT = """<b>📚 Krypton Bot - Comandos Disponibles</b>
+COMMAND_HELP = {
+    'addadmin': ('Añade administradores del bot.', '/addadmin @usuario [...]', 'Actualiza la lista; úsalo en privado.'),
+    'addlearner': ('Da permiso para usar los comandos de aprendizaje.', '/addlearner @usuario [...]', 'Los administradores también tienen este permiso.'),
+    'deop': ('Retira los permisos de administración de grupo a un usuario.', '/deop @usuario', 'El usuario debe estar identificado en el seguimiento del bot.'),
+    'deladmin': ('Retira administradores del bot.', '/deladmin @usuario [...]', 'Actualiza la lista; úsalo en privado.'),
+    'dellearner': ('Retira el permiso de aprendiz.', '/dellearner @usuario [...]', ''),
+    'getadmins': ('Muestra la lista de administradores del bot.', '/getadmins', 'Solo en privado.'),
+    'getcfg': ('Muestra la configuración con los secretos ocultos.', '/getcfg', 'Solo en privado.'),
+    'getchatid': ('Muestra el ID del chat actual.', '/getchatid', 'Disponible para todos.'),
+    'getlearners': ('Muestra la lista de aprendices.', '/getlearners', 'Solo en privado.'),
+    'getuserid': ('Busca el ID de un usuario conocido por su nombre de usuario.', '/getuserid @usuario', 'El usuario debe haber sido visto por el bot.'),
+    'globvars': ('Muestra variables de estado del bot; oculta las claves secretas de configuración.', '/globvars', 'Solo en privado.'),
+    'help': ('Muestra los comandos o la ayuda detallada de uno.', '/help [comando]', 'Solo en privado. Ejemplo: /help setcfg.'),
+    'kick': ('Expulsa (banea) a un usuario del grupo.', '/kick @usuario [duración_segundos]', 'Sin duración, el baneo es temporal y se libera inmediatamente. El usuario debe haber sido visto por el bot.'),
+    'listgroups': ('Lista los grupos registrados por el bot desde que se inició.', '/listgroups', 'Solo en privado.'),
+    'listmembers': ('Lista miembros conocidos de un grupo.', '/listmembers <nombre_o_chat_id>', 'Solo en privado. El bot no puede enumerar miembros que nunca ha observado.'),
+    'loginchatgpt': ('Vincula una suscripción ChatGPT mediante inicio de sesión OAuth.', '/loginchatgpt [URL_de_callback]', 'Solo en privado. Primero solicita la URL y después envía la URL completa de callback.'),
+    'op': ('Promueve a un usuario con permisos de administración de grupo.', '/op @usuario', 'El usuario debe estar identificado por el bot y este debe tener permisos suficientes.'),
+    'reloadcfg': ('Recarga la configuración desde el archivo.', '/reloadcfg', ''),
+    'savecfg': ('Guarda en disco la configuración actual.', '/savecfg', ''),
+    'setcfg': ('Cambia una opción de configuración usando un valor JSON y la guarda.', '/setcfg <clave> <valor_JSON>', 'Solo en privado. Ejemplos: /setcfg ai_enabled true · /setcfg ai_context_size 30 · /setcfg ai_model_id "proveedor/modelo".'),
+}
 
-<b>Comandos de Administración:</b>
-  <code>/setcfg</code> - Cambiar una opción de configuración
-  <code>/loginchatgpt</code> - Conectar una suscripción ChatGPT
-  <code>/reloadcfg</code> - Recargar configuración
-  <code>/savecfg</code> - Guardar configuración actual
-  <code>/addadmin</code> - Añadir administrador
-  <code>/deladmin</code> - Eliminar administrador
-  <code>/addlearner</code> - Añadir aprendiz
-  <code>/dellearner</code> - Eliminar aprendiz
-  <code>/kick</code> - Expulsar usuario del grupo
-  <code>/op</code> - Promover a administrador del grupo
-  <code>/deop</code> - Quitar administración del grupo
+KB_COMMAND_HELP = {
+    '??': ('Consulta una definición de la base de conocimiento.', '?? <clave>', 'Añade -a antes de la clave para incluir autor y fecha: ?? -a <clave>. Disponible para todos.'),
+    '!learn': ('Añade una definición; también puede aprender el mensaje al que respondes.', '!learn [-l] [-f] <clave> [definición]', '-l bloquea la entrada y -f permite a administradores reemplazar una existente. Usuarios aprendices o administradores.'),
+    '!forget': ('Elimina una definición.', '!forget [-f] <clave>', '-f permite a administradores eliminar entradas bloqueadas. Usuarios aprendices o administradores.'),
+    '!lock': ('Bloquea una definición para que no pueda borrarse sin -f.', '!lock <clave>', 'Solo administradores.'),
+    '!unlock': ('Desbloquea una definición.', '!unlock <clave>', 'Solo administradores.'),
+    '!listkeys': ('Busca claves de la base de conocimiento.', '!listkeys <patrón>', 'El comodín * coincide con cualquier texto. Disponible para todos.'),
+    '!find': ('Busca texto dentro de las definiciones.', '!find <texto>', 'El comodín * coincide con cualquier texto. Disponible para todos.'),
+}
+KB_COMMAND_ACCESS = {
+    '??': 'Disponible para todos',
+    '!learn': 'Aprendices y administradores',
+    '!forget': 'Aprendices y administradores',
+    '!lock': 'Solo administradores',
+    '!unlock': 'Solo administradores',
+    '!listkeys': 'Disponible para todos',
+    '!find': 'Disponible para todos',
+}
 
-<b>Comandos de Información:</b>
-  <code>/getcfg</code> - Obtener configuración actual
-  <code>/getadmins</code> - Listar administradores
-  <code>/getlearners</code> - Listar aprendices
-  <code>/globvars</code> - Ver variables globales
-  <code>/getuserid</code> - Obtener ID de usuario
-  <code>/getchatid</code> - Obtener ID del chat
-  <code>/listgroups</code> - Listar grupos activos
-  <code>/listmembers</code> - Listar miembros de un grupo
-  <code>/help</code> - Mostrar esta ayuda
 
-<b>💡 Tip:</b> Usa <code>/help &lt;comando&gt;</code> para ver ayuda específica de un comando.
-"""
+def _command_policy(name):
+    admin, private = COMMAND_POLICIES.get(name, (False, False))
+    access = 'Solo administradores' if admin else 'Disponible para todos'
+    if private:
+        access += '; solo en privado'
+    return access
+
+
+def _help_entry(name, description, usage, notes='', access=None):
+    lines = [f'<b>{html.escape(name)}</b> — {html.escape(description)}',
+             f'<b>Uso:</b> <code>{html.escape(usage)}</code>']
+    if access:
+        lines.append(f'<b>Acceso:</b> {html.escape(access)}')
+    if notes:
+        lines.append(html.escape(notes))
+    return '\n'.join(lines)
+
+
+def _build_help_text():
+    lines = ['<b>📚 Ayuda de Krypton para administradores</b>',
+             'Usa <code>/help comando</code> para ver detalles y ejemplos.']
+    for title, names in (
+            ('Administración', sorted(COMMANDS)),
+            ('Base de conocimiento', sorted(KB_COMMAND_HELP))):
+        lines.extend(['', f'<b>{title}</b>'])
+        for name in names:
+            details = COMMAND_HELP.get(name)
+            if details:
+                description = details[0]
+            else:
+                description = 'Ayuda general de comandos.'
+            lines.append(f'<code>/{name}</code> — {html.escape(description)}' if name in COMMANDS
+                         else f'<code>{html.escape(name)}</code> — {html.escape(description)}')
+    return '\n'.join(lines)
+
+
+HELP_TEXT = _build_help_text()
+
 
 def get_command_help(command_name: str) -> str:
-    """Get help text for a specific command."""
-    command_help = {
-        '/setcfg': """<b>⚙️ /setcfg</b>
-
-<b>Descripción:</b> Cambia una opción de configuración y la guarda inmediatamente.
-
-<b>Uso:</b> <code>/setcfg clave valor_JSON</code>
-
-<b>Ejemplos:</b>
-<code>/setcfg ai_enabled true</code>
-<code>/setcfg ai_model_id "proveedor/modelo"</code>
-<code>/setcfg ai_context_size 30</code>
-
-<b>Permisos:</b> Solo administradores, por privado. Algunas opciones requieren reiniciar el bot para surtir efecto.""",
-
-        '/loginchatgpt': """<b>🔑 /loginchatgpt</b>
-
-<b>Descripción:</b> Conecta una suscripción ChatGPT (Plus/Pro) sin API key.
-El login se hace una sola vez; luego el bot refresca los tokens solo.
-
-<b>Uso:</b>
-1. <code>/loginchatgpt</code> — el bot te da una URL.
-2. Entra con tu cuenta ChatGPT. El navegador dará error en <code>localhost:1455</code>
-   (es normal): copia la URL completa de la barra de direcciones.
-3. <code>/loginchatgpt URL_completa</code>
-
-<b>Después:</b> <code>/setcfg ai_provider "chatgpt"</code> y
-<code>/setcfg ai_model_id "tu-modelo"</code>.
-
-<b>Permisos:</b> Solo administradores, por privado.""",
-
-        '/reloadcfg': """<b>🔄 /reloadcfg</b>
-
-<b>Descripción:</b> Recarga la configuración desde el archivo.
-
-<b>Uso:</b> <code>/reloadcfg</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/reloadcfg</code>""",
-
-        '/savecfg': """<b>💾 /savecfg</b>
-
-<b>Descripción:</b> Guarda la configuración actual a disco.
-
-<b>Uso:</b> <code>/savecfg</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/savecfg</code>""",
-
-        '/addadmin': """<b>👑 /addadmin</b>
-
-<b>Descripción:</b> Añade un usuario como administrador del bot.
-
-<b>Uso:</b> <code>/addadmin @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/addadmin radix</code>""",
-
-        '/deladmin': """<b>❌ /deladmin</b>
-
-<b>Descripción:</b> Elimina un usuario como administrador del bot.
-
-<b>Uso:</b> <code>/deladmin @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/deladmin radix</code>""",
-
-        '/addlearner': """<b>📖 /addlearner</b>
-
-<b>Descripción:</b> Añade un usuario como aprendiz (puede usar !learn).
-
-<b>Uso:</b> <code>/addlearner @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/addlearner paoloandreotti</code>""",
-
-        '/dellearner': """<b>📛 /dellearner</b>
-
-<b>Descripción:</b> Elimina un usuario como aprendiz.
-
-<b>Uso:</b> <code>/dellearner @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/dellearner paoloandreotti</code>""",
-
-        '/kick': """<b>🚫 /kick</b>
-
-<b>Descripción:</b> Expulsa a un usuario del grupo.
-
-<b>Uso:</b> <code>/kick @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/kick troll_user</code>""",
-
-        '/op': """<b>⬆️ /op</b>
-
-<b>Descripción:</b> Promueve a un usuario a administrador del grupo.
-
-<b>Uso:</b> <code>/op @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/op moderador</code>""",
-
-        '/deop': """<b>⬇️ /deop</b>
-
-<b>Descripción:</b> Remueve la administración de un usuario del grupo.
-
-<b>Uso:</b> <code>/deop @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/deop exmod</code>""",
-
-        '/getcfg': """<b>📋 /getcfg</b>
-
-<b>Descripción:</b> Muestra la configuración actual del bot.
-
-<b>Uso:</b> <code>/getcfg</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/getcfg</code>""",
-
-        '/getadmins': """<b>👥 /getadmins</b>
-
-<b>Descripción:</b> Lista los administradores del bot.
-
-<b>Uso:</b> <code>/getadmins</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/getadmins</code>""",
-
-        '/getlearners': """<b>📚 /getlearners</b>
-
-<b>Descripción:</b> Lista los aprendices del bot.
-
-<b>Uso:</b> <code>/getlearners</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/getlearners</code>""",
-
-        '/globvars': """<b>🔧 /globvars</b>
-
-<b>Descripción:</b> Muestra las variables globales del bot.
-
-<b>Uso:</b> <code>/globvars</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/globvars</code>""",
-
-        '/getuserid': """<b>🆔 /getuserid</b>
-
-<b>Descripción:</b> Obtiene el ID de Telegram de un usuario.
-
-<b>Uso:</b> <code>/getuserid @username</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/getuserid radix</code>""",
-
-        '/getchatid': """<b>🏠 /getchatid</b>
-
-<b>Descripción:</b> Obtiene el ID del chat actual.
-
-<b>Uso:</b> <code>/getchatid</code>
-
-<b>Permisos:</b> Todos los usuarios
-
-<b>Ejemplo:</b> <code>/getchatid</code>""",
-
-        '/listgroups': """<b>📁 /listgroups</b>
-
-<b>Descripción:</b> Lista todos los grupos donde el bot está activo.
-
-<b>Uso:</b> <code>/listgroups</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/listgroups</code>""",
-
-        '/listmembers': """<b>👥 /listmembers</b>
-
-<b>Descripción:</b> Lista los miembros de un grupo.
-
-<b>Uso:</b> <code>/listmembers &lt;nombre_grupo&gt;</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/listmembers #Linux</code>""",
-
-        '/help': """<b>📚 /help</b>
-
-<b>Descripción:</b> Muestra ayuda general o ayuda específica de un comando.
-
-<b>Uso:</b> <code>/help</code> o <code>/help &lt;comando&gt;</code>
-
-<b>Permisos:</b> Solo administradores
-
-<b>Ejemplo:</b> <code>/help</code> o <code>/help listmembers</code>"""
-    }
-
-    # Normalize command name
-    command_name = command_name.lower().strip()
-    if not command_name.startswith('/'):
-        command_name = '/' + command_name
-
-    return command_help.get(command_name, None)
+    """Return detailed help for a registered bot or knowledge-base command."""
+    command_name = command_name.lower().strip().split('@', 1)[0]
+    if command_name.startswith('/'):
+        command_name = command_name[1:]
+
+    if command_name in KB_COMMAND_HELP:
+        description, usage, notes = KB_COMMAND_HELP[command_name]
+        return _help_entry(command_name, description, usage, notes,
+                           KB_COMMAND_ACCESS[command_name])
+
+    details = COMMAND_HELP.get(command_name)
+    if not details or command_name not in COMMANDS:
+        return None
+    description, usage, notes = details
+    return _help_entry('/' + command_name, description, usage, notes,
+                       _command_policy(command_name))
