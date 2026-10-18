@@ -7,14 +7,16 @@
 
 import argparse
 import logging
+import os
 import re
 import sqlite3
+import sys
 import time
 from collections import deque
 
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters
 
-from lib import ai, ai_worker, bot_commands, globvars, lib
+from lib import ai, ai_worker, bot_commands, chatgpt, globvars, lib
 
 logger = logging.getLogger(__name__)
 
@@ -363,12 +365,18 @@ def main():
                         help='Enable verbose/debug logging')
     parser.add_argument('--config', '-c', type=str, default='config.json',
                         help='Path to config file (default: config.json)')
+    parser.add_argument('--login-chatgpt', action='store_true',
+                        help='Sign in with a ChatGPT Plus/Pro subscription and save the tokens')
     args = parser.parse_args()
 
     logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
                         level=logging.DEBUG if args.verbose else logging.INFO)
 
     globvars.config_file = args.config
+    if args.login_chatgpt:
+        config = lib.load_config() if os.path.exists(args.config) else {}
+        sys.exit(0 if chatgpt.login(config) else 1)
+
     config = lib.load_config()
     lib.open_db()
     lib.load_history(config.get('ai_context_size', 50))

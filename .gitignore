@@ -10,6 +10,10 @@ venv/
 config.json
 root.json
 
+# ChatGPT OAuth tokens
+chatgpt_auth.json
+*.chatgpt.json
+
 # Database files
 learn.db
 root.db

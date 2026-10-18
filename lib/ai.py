@@ -9,7 +9,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from lib import ai_tools
+from lib import ai_tools, chatgpt
 
 logger = logging.getLogger(__name__)
 
@@ -44,16 +44,22 @@ def call_ai_api(context_messages, query, config, ctx=None, images=None):
         logger.error("AI configuration is None")
         return None
 
-    ai_url = config.get('ai_api_url')
-    ai_model = config.get('ai_model_id')
-    if images:  # the default model may be text-only
-        ai_model = config.get('ai_vision_model_id') or ai_model
-    api_key = config.get('ai_api_key')
     system_prompt = config.get('ai_system_prompt', """You are a helpful AI assistant. Answer the user's question based on the conversation context provided.
 
 Keep responses concise and relevant. If the context doesn't contain relevant information, do your best to help based on your knowledge.
 
 Format your response naturally as if you're participating in the conversation.""")
+    instructions = f"{system_prompt}\n\nCurrent date and time: {_now(config)}"
+
+    if (config.get('ai_provider') or 'openai').lower() == 'chatgpt':
+        return chatgpt.call_ai_api(context_messages, query, config, ctx=ctx, images=images,
+                                   instructions=instructions)
+
+    ai_url = config.get('ai_api_url')
+    ai_model = config.get('ai_model_id')
+    if images:  # the default model may be text-only
+        ai_model = config.get('ai_vision_model_id') or ai_model
+    api_key = config.get('ai_api_key')
     
     # Get retry and timeout configuration
     ai_timeout = config.get('ai_timeout', 30)  # Default: 30 seconds (LLMs are slow)
@@ -65,7 +71,7 @@ Format your response naturally as if you're participating in the conversation.""
 
     # Build conversation history
     messages = [
-        {"role": "system", "content": f"{system_prompt}\n\nCurrent date and time: {_now(config)}"}
+        {"role": "system", "content": instructions}
     ]
 
     # Add context messages (last N messages)

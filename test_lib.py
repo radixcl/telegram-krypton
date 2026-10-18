@@ -1,11 +1,15 @@
 # run: python3 -m unittest
+import json
+import os
 import sqlite3
+import tempfile
+import time
 import unittest
 from types import SimpleNamespace as NS
 
 from unittest import mock
 
-from lib import ai, ai_tools, ai_worker, bot_commands, globvars, lib
+from lib import ai, ai_tools, ai_worker, bot_commands, chatgpt, globvars, lib
 
 
 class LibTest(unittest.TestCase):
@@ -244,6 +248,91 @@ class LibTest(unittest.TestCase):
                               {'type': 'image_url', 'image_url': {'url': 'data:image/jpeg;base64,AA=='}}])
             ai.call_ai_api([], 'hola', cfg)
             self.assertEqual(post.call_args.kwargs['json']['model'], 'm')   # no image: default model
+
+    def _chatgpt_cfg(self, tokens=None):
+        handle = tempfile.NamedTemporaryFile('w', suffix='.json', delete=False)
+        json.dump(tokens or {'access_token': 'at', 'refresh_token': 'rt',
+                             'expires_at': int(time.time()) + 3600, 'account_id': 'acc'}, handle)
+        handle.close()
+        self.addCleanup(os.unlink, handle.name)
+        return {'ai_provider': 'chatgpt', 'ai_model_id': 'gpt-5', 'ai_tools_enabled': False,
+                'ai_chatgpt_auth_file': handle.name}
+
+    @staticmethod
+    def _stream(*events):
+        class Response:
+            status_code = 200
+            headers = {}
+            text = ''
+
+            def iter_lines(self, decode_unicode=True):
+                for event in events:
+                    yield 'data: ' + json.dumps(event)
+                yield ''
+
+            def close(self):
+                pass
+
+        return Response()
+
+    def test_chatgpt_provider_streams_text(self):
+        cfg = self._chatgpt_cfg()
+        events = [{'type': 'response.output_text.delta', 'delta': 'hola'},
+                  {'type': 'response.output_text.delta', 'delta': ' mundo'},
+                  {'type': 'response.completed', 'response': {'output': [
+                      {'type': 'message', 'content': [{'type': 'output_text', 'text': 'hola mundo'}]}]}}]
+        with mock.patch.object(chatgpt.requests, 'post') as post:
+            post.return_value = self._stream(*events)
+            self.assertEqual(ai.call_ai_api([], 'q', cfg), 'hola mundo')
+        self.assertEqual(post.call_args.args[0], chatgpt.API_URL)
+        self.assertEqual(post.call_args.kwargs['json']['model'], 'gpt-5')
+        self.assertEqual(post.call_args.kwargs['headers']['chatgpt-account-id'], 'acc')
+        self.assertEqual(post.call_args.kwargs['json']['input'][-1]['content'][0]['text'], 'q')
+
+    def test_chatgpt_refreshes_expired_token(self):
+        cfg = self._chatgpt_cfg({'access_token': 'old', 'refresh_token': 'rt', 'expires_at': 0})
+        refreshed = {'access_token': 'new', 'refresh_token': 'rt2', 'expires_in': 3600}
+
+        def fake_post(url, **kwargs):
+            if url == chatgpt.TOKEN_URL:
+                response = mock.Mock(status_code=200)
+                response.json.return_value = refreshed
+                return response
+            return self._stream({'type': 'response.output_text.delta', 'delta': 'ok'},
+                                {'type': 'response.completed', 'response': {'output': []}})
+
+        with mock.patch.object(chatgpt.requests, 'post', side_effect=fake_post) as post:
+            self.assertEqual(ai.call_ai_api([], 'q', cfg), 'ok')
+        self.assertEqual(post.call_args_list[0].args[0], chatgpt.TOKEN_URL)  # refreshed first
+        self.assertEqual(post.call_args_list[-1].kwargs['headers']['Authorization'], 'Bearer new')
+        self.assertEqual(chatgpt.load_tokens(cfg)['refresh_token'], 'rt2')
+
+    def test_chatgpt_tool_round(self):
+        cfg = self._chatgpt_cfg()
+        cfg['ai_tools_enabled'] = True
+        call = {'type': 'function_call', 'call_id': 'c1', 'name': 'calculator',
+                'arguments': '{"expression": "2+3*4"}'}
+        first = self._stream({'type': 'response.output_item.done', 'item': call},
+                             {'type': 'response.completed', 'response': {'output': [call]}})
+        second = self._stream({'type': 'response.output_text.delta', 'delta': '14'},
+                              {'type': 'response.completed', 'response': {'output': []}})
+        with mock.patch.object(chatgpt.requests, 'post', side_effect=[first, second]) as post:
+            self.assertEqual(ai.call_ai_api([], 'cuanto?', cfg), '14')
+        payload = post.call_args_list[1].kwargs['json']
+        outputs = [i for i in payload['input'] if i.get('type') == 'function_call_output']
+        self.assertEqual(outputs[0]['output'], '14')
+        self.assertIn('calculator', [t['name'] for t in payload['tools']])
+
+    def test_chatgpt_images_fall_back_to_main_model(self):
+        cfg = self._chatgpt_cfg()
+        cfg['ai_vision_model_id'] = 'nvidia/nemotron-vl'  # a model that does not exist on this backend
+        with mock.patch.object(chatgpt.requests, 'post') as post:
+            post.return_value = self._stream({'type': 'response.completed', 'response': {'output': []}})
+            chatgpt.call_ai_api([], 'q', cfg, images=['data:image/png;base64,AA=='])
+        payload = post.call_args.kwargs['json']
+        self.assertEqual(payload['model'], 'gpt-5')
+        self.assertEqual(payload['input'][-1]['content'][1],
+                         {'type': 'input_image', 'image_url': 'data:image/png;base64,AA=='})
 
     def test_worker_downloads_images(self):
         w = ai_worker.AIWorker()
