@@ -5,7 +5,7 @@ from types import SimpleNamespace as NS
 
 from unittest import mock
 
-from lib import ai, ai_tools, ai_worker, globvars, lib
+from lib import ai, ai_tools, ai_worker, bot_commands, globvars, lib
 
 
 class LibTest(unittest.TestCase):
@@ -19,6 +19,37 @@ class LibTest(unittest.TestCase):
     def test_permissions(self):
         self.assertTrue(lib.is_admin('adm') and not lib.is_admin('lrn'))
         self.assertTrue(lib.is_learner('adm') and lib.is_learner('lrn') and not lib.is_learner('x'))
+
+    def test_setcfg_updates_and_persists_json_value(self):
+        update = NS(message=NS(from_user=NS(username='adm', id=1)),
+                    effective_message=NS(text='/setcfg ai_system_prompt "hello world"'),
+                    effective_chat=NS(type='private'))
+        with mock.patch.object(lib, 'save_config') as save, mock.patch.object(lib, 'send') as send:
+            bot_commands.COMMANDS['setcfg'](update, NS())
+        self.assertEqual(globvars.config['ai_system_prompt'], 'hello world')
+        save.assert_called_once_with(globvars.config)
+        self.assertIn('guardada', send.call_args.args[2])
+
+    def test_setcfg_rejects_invalid_json(self):
+        update = NS(message=NS(from_user=NS(username='adm', id=1)),
+                    effective_message=NS(text='/setcfg ai_enabled maybe'),
+                    effective_chat=NS(type='private'))
+        with mock.patch.object(lib, 'save_config') as save, mock.patch.object(lib, 'send') as send:
+            bot_commands.COMMANDS['setcfg'](update, NS())
+        self.assertNotIn('ai_enabled', globvars.config)
+        save.assert_not_called()
+        self.assertIn('JSON inválido', send.call_args.args[2])
+
+    def test_setcfg_rejects_wrong_type(self):
+        globvars.config['ai_enabled'] = True
+        update = NS(message=NS(from_user=NS(username='adm', id=1)),
+                    effective_message=NS(text='/setcfg ai_enabled "yes"'),
+                    effective_chat=NS(type='private'))
+        with mock.patch.object(lib, 'save_config') as save, mock.patch.object(lib, 'send') as send:
+            bot_commands.COMMANDS['setcfg'](update, NS())
+        self.assertIs(globvars.config['ai_enabled'], True)
+        save.assert_not_called()
+        self.assertIn('tipo actual', send.call_args.args[2])
 
     def test_defs_alias_and_lock(self):
         lib.add_def('Foo', 1, 'a', '', 'bar')

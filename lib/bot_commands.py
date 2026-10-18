@@ -1,6 +1,7 @@
 import html
 import json
 import logging
+import re
 import time
 
 from lib import globvars, lib
@@ -108,6 +109,42 @@ def getuserid(update, context, params):
 @command('getcfg', private=True)
 def getcfg(update, context, params):
     lib.send(update, context, '```json\n%s```' % json.dumps(redact_config(globvars.config), indent=2), 'Markdown')
+
+@command('setcfg', private=True)
+def setcfg(update, context, params):
+    """Set one config value using JSON: /setcfg key <JSON value>."""
+    text = update.effective_message.text
+    match = re.match(r'^/setcfg(?:@\S+)?\s+(\S+)\s+(.+)$', text, re.S)
+    if not match:
+        lib.send(update, context, 'Uso: /setcfg clave valor_JSON')
+        return
+
+    key, raw_value = match.groups()
+    try:
+        value = json.loads(raw_value)
+    except ValueError:
+        lib.send(update, context, 'Valor JSON inválido. Ejemplos: true, 30, "texto", ["a", "b"]')
+        return
+
+    if key in globvars.config and type(value) is not type(globvars.config[key]):
+        lib.send(update, context, 'El valor debe mantener el tipo actual de %s.' % key)
+        return
+
+    previous = globvars.config.get(key, None)
+    had_key = key in globvars.config
+    globvars.config[key] = value
+    try:
+        lib.save_config(globvars.config)
+    except Exception:
+        if had_key:
+            globvars.config[key] = previous
+        else:
+            del globvars.config[key]
+        logger.exception('Could not save config key %s', key)
+        lib.send(update, context, 'No se pudo guardar la configuración.')
+        return
+
+    lib.send(update, context, 'Configuración guardada: %s.' % key)
 
 @command('globvars', private=True)
 def show_globvars(update, context, params):
@@ -279,6 +316,7 @@ def help_cmd(update, context, params):
 HELP_TEXT = """<b>📚 Krypton Bot - Comandos Disponibles</b>
 
 <b>Comandos de Administración:</b>
+  <code>/setcfg</code> - Cambiar una opción de configuración
   <code>/reloadcfg</code> - Recargar configuración
   <code>/savecfg</code> - Guardar configuración actual
   <code>/addadmin</code> - Añadir administrador
@@ -306,6 +344,19 @@ HELP_TEXT = """<b>📚 Krypton Bot - Comandos Disponibles</b>
 def get_command_help(command_name: str) -> str:
     """Get help text for a specific command."""
     command_help = {
+        '/setcfg': """<b>⚙️ /setcfg</b>
+
+<b>Descripción:</b> Cambia una opción de configuración y la guarda inmediatamente.
+
+<b>Uso:</b> <code>/setcfg clave valor_JSON</code>
+
+<b>Ejemplos:</b>
+<code>/setcfg ai_enabled true</code>
+<code>/setcfg ai_model_id "proveedor/modelo"</code>
+<code>/setcfg ai_context_size 30</code>
+
+<b>Permisos:</b> Solo administradores, por privado. Algunas opciones requieren reiniciar el bot para surtir efecto.""",
+
         '/reloadcfg': """<b>🔄 /reloadcfg</b>
 
 <b>Descripción:</b> Recarga la configuración desde el archivo.
