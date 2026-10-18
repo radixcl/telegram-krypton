@@ -334,6 +334,37 @@ class LibTest(unittest.TestCase):
         self.assertEqual(payload['input'][-1]['content'][1],
                          {'type': 'input_image', 'image_url': 'data:image/png;base64,AA=='})
 
+    def test_chatgpt_login_two_step(self):
+        cfg = self._chatgpt_cfg()
+        url, verifier, state = chatgpt.start_login()
+        self.assertIn('code_challenge=', url)
+        self.assertIn('client_id=', url)
+        callback = 'http://localhost:1455/auth/callback?code=abc&state=' + state
+        response = mock.Mock(status_code=200)
+        response.json.return_value = {'access_token': 'new', 'refresh_token': 'r2', 'expires_in': 3600}
+        with mock.patch.object(chatgpt.requests, 'post', return_value=response):
+            ok, message = chatgpt.complete_login(cfg, callback, verifier, state)
+        self.assertTrue(ok, message)
+        self.assertEqual(chatgpt.load_tokens(cfg)['access_token'], 'new')
+        self.assertFalse(chatgpt.complete_login(cfg, callback.replace(state, 'bad'),
+                                                verifier, state)[0])
+
+    def test_loginchatgpt_command(self):
+        update = NS(message=NS(from_user=NS(username='adm', id=1)),
+                    effective_message=NS(text='/loginchatgpt'),
+                    effective_chat=NS(type='private'))
+        with mock.patch.object(chatgpt, 'start_login', return_value=('https://auth.example', 'v', 's')), \
+                mock.patch.object(lib, 'send') as send:
+            bot_commands.COMMANDS['loginchatgpt'](update, NS())
+        self.assertIn('https://auth.example', send.call_args.args[2])
+
+        update.effective_message = NS(
+            text='/loginchatgpt http://localhost:1455/auth/callback?code=c&state=s')
+        with mock.patch.object(chatgpt, 'complete_login', return_value=(True, 'ok')) as done, \
+                mock.patch.object(lib, 'send'):
+            bot_commands.COMMANDS['loginchatgpt'](update, NS())
+        done.assert_called_once()
+
     def test_worker_downloads_images(self):
         w = ai_worker.AIWorker()
         w.bot = mock.Mock()

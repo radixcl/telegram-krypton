@@ -138,8 +138,8 @@ def _exchange(code, verifier):
         return None
 
 
-def login(config):
-    """Interactive OAuth login; saves the tokens and returns True on success."""
+def start_login():
+    """Create the OAuth URL plus the PKCE verifier/state for a login."""
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(
         hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
@@ -149,6 +149,27 @@ def login(config):
         'scope': SCOPE, 'code_challenge': challenge, 'code_challenge_method': 'S256',
         'state': state, 'id_token_add_organizations': 'true',
         'codex_cli_simplified_flow': 'true'})
+    return url, verifier, state
+
+
+def complete_login(config, callback_url, verifier, state):
+    """Finish a login with the URL the browser was redirected to. Returns (ok, message)."""
+    query = parse_qs(urlparse(callback_url).query)
+    code = (query.get('code') or [None])[0]
+    if not code:
+        return False, 'La URL no trae "code". Copia la URL completa de la barra de direcciones.'
+    if (query.get('state') or [None])[0] != state:
+        return False, 'El state no coincide. Empieza de nuevo con /loginchatgpt.'
+    tokens = _exchange(code, verifier)
+    if not tokens:
+        return False, 'No se pudo canjear el código (¿caducó?). Empieza de nuevo con /loginchatgpt.'
+    save_tokens(config, tokens)
+    return True, 'ChatGPT conectado. Tokens guardados en %s' % _auth_file(config)
+
+
+def login(config):
+    """Interactive OAuth login from the CLI; saves the tokens and returns True on success."""
+    url, verifier, state = start_login()
 
     result = {}
 
@@ -196,15 +217,11 @@ def login(config):
     if not result:
         logger.error("ChatGPT login timed out.")
         return False
-    if result.get('state') != state:
-        logger.error("ChatGPT login failed: state mismatch.")
-        return False
-    tokens = _exchange(result['code'], verifier)
-    if not tokens:
-        return False
-    save_tokens(config, tokens)
-    print('Logged in. Tokens saved to %s' % _auth_file(config))
-    return True
+    callback = REDIRECT_URI + '?' + urlencode({'code': result['code'],
+                                               'state': result.get('state', '')})
+    ok, message = complete_login(config, callback, verifier, state)
+    print(message)
+    return ok
 
 
 # --- Responses API ------------------------------------------------------------

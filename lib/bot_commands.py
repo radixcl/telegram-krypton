@@ -4,7 +4,7 @@ import logging
 import re
 import time
 
-from lib import globvars, lib
+from lib import chatgpt, globvars, lib
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +145,33 @@ def setcfg(update, context, params):
         return
 
     lib.send(update, context, 'Configuración guardada: %s.' % key)
+
+_chatgpt_login = {}  # pending two-step OAuth login (verifier/state/expiry)
+
+@command('loginchatgpt', private=True)
+def loginchatgpt(update, context, params):
+    """Two steps: /loginchatgpt gives the URL, then paste the callback URL."""
+    if not params:
+        url, verifier, state = chatgpt.start_login()
+        _chatgpt_login.update(verifier=verifier, state=state, expires=time.time() + 900)
+        safe = html.escape(url)
+        lib.send(update, context,
+                 '<b>Login de ChatGPT</b>\n\n'
+                 '1. Abre esta URL y entra con tu cuenta ChatGPT:\n'
+                 '<a href="%s">%s</a>\n\n'
+                 '2. Al terminar, el navegador irá a <code>localhost:1455</code> y dará error de '
+                 'conexión (es normal). Copia la URL completa de la barra de direcciones.\n\n'
+                 '3. Envíala aquí:\n<code>/loginchatgpt URL_completa</code>\n\n'
+                 'Caduca en 15 minutos.' % (safe, safe), 'HTML')
+        return
+    if not _chatgpt_login or time.time() > _chatgpt_login.get('expires', 0):
+        lib.send(update, context, 'No hay login pendiente (o caducó). Empieza con /loginchatgpt.')
+        return
+    ok, message = chatgpt.complete_login(globvars.config, params[0],
+                                         _chatgpt_login['verifier'], _chatgpt_login['state'])
+    if ok:
+        _chatgpt_login.clear()
+    lib.send(update, context, html.escape(message), 'HTML')
 
 @command('globvars', private=True)
 def show_globvars(update, context, params):
@@ -317,6 +344,7 @@ HELP_TEXT = """<b>📚 Krypton Bot - Comandos Disponibles</b>
 
 <b>Comandos de Administración:</b>
   <code>/setcfg</code> - Cambiar una opción de configuración
+  <code>/loginchatgpt</code> - Conectar una suscripción ChatGPT
   <code>/reloadcfg</code> - Recargar configuración
   <code>/savecfg</code> - Guardar configuración actual
   <code>/addadmin</code> - Añadir administrador
@@ -356,6 +384,22 @@ def get_command_help(command_name: str) -> str:
 <code>/setcfg ai_context_size 30</code>
 
 <b>Permisos:</b> Solo administradores, por privado. Algunas opciones requieren reiniciar el bot para surtir efecto.""",
+
+        '/loginchatgpt': """<b>🔑 /loginchatgpt</b>
+
+<b>Descripción:</b> Conecta una suscripción ChatGPT (Plus/Pro) sin API key.
+El login se hace una sola vez; luego el bot refresca los tokens solo.
+
+<b>Uso:</b>
+1. <code>/loginchatgpt</code> — el bot te da una URL.
+2. Entra con tu cuenta ChatGPT. El navegador dará error en <code>localhost:1455</code>
+   (es normal): copia la URL completa de la barra de direcciones.
+3. <code>/loginchatgpt URL_completa</code>
+
+<b>Después:</b> <code>/setcfg ai_provider "chatgpt"</code> y
+<code>/setcfg ai_model_id "tu-modelo"</code>.
+
+<b>Permisos:</b> Solo administradores, por privado.""",
 
         '/reloadcfg': """<b>🔄 /reloadcfg</b>
 
