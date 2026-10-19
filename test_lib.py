@@ -2,8 +2,10 @@
 import json
 import os
 import sqlite3
+import sys
 import tempfile
 import time
+import types
 import unittest
 from types import SimpleNamespace as NS
 
@@ -194,6 +196,119 @@ class LibTest(unittest.TestCase):
         self.assertTrue(out.startswith('FAILED') and 'no title' in out and 'media' not in ctx)
         out = ai_tools.link_preview({'url': 'http://127.0.0.1/x'}, {}, {})
         self.assertTrue(out.startswith('FAILED') and 'private' in out)
+
+    def test_link_preview_downloads_direct_video_and_falls_back_to_image(self):
+        html = (b'<meta property="og:title" content="Video">'
+                b'<meta property="og:video" content="/clip.mp4">'
+                b'<meta property="og:image" content="/cover.jpg">')
+        page = (html, 'text/html', 'https://video.example/@user/video/1', 'utf-8')
+        video = (b'MP4', 'video/mp4', 'https://video.example/clip.mp4', 'utf-8')
+        ctx = {}
+        with mock.patch.object(ai_tools, '_http_get', side_effect=[page, video]) as get:
+            out = ai_tools.link_preview({'url': 'https://video.example/@user/video/1'}, {}, ctx)
+        self.assertEqual(ctx['media'], [('video', b'MP4', 'Video\nhttps://video.example/@user/video/1')])
+        self.assertEqual(get.call_args_list[1].args[:3],
+                         ('https://video.example/clip.mp4', ai_tools.MAX_MEDIA_BYTES, ('video/',)))
+        self.assertIn('Preview attached', out)
+
+        ctx = {}
+        with mock.patch.object(ai_tools, '_http_get', side_effect=[page, ValueError('not a direct video'),
+                                                                   (b'JPG', 'image/jpeg',
+                                                                    'https://video.example/cover.jpg', 'utf-8')]):
+            ai_tools.link_preview({'url': 'https://video.example/@user/video/1'}, {}, ctx)
+        self.assertEqual(ctx['media'][0][0:2], ('image', b'JPG'))
+
+    def test_facebook_reel_preview_uses_public_thumbnail_when_video_url_is_not_exposed(self):
+        url = 'https://www.facebook.com/reel/1090713193750602'
+        html = (b'<meta property="og:title" content="Cult | Slayer">'
+                b'<meta property="og:description" content="#slayer #metalmusic">'
+                b'<meta property="og:image" content="https://scontent.fbcdn.net/cover.jpg">')
+        page = (html, 'text/html', url, 'utf-8')
+        image = (b'JPG', 'image/jpeg', 'https://scontent.fbcdn.net/cover.jpg', 'utf-8')
+        ctx = {}
+        with mock.patch.object(ai_tools, '_download_social_video', side_effect=ValueError('unavailable')), \
+                mock.patch.object(ai_tools, '_http_get', side_effect=[page, image]) as get:
+            ai_tools.link_preview({'url': url}, {}, ctx)
+        self.assertEqual(ctx['media'][0][0:2], ('image', b'JPG'))
+        self.assertIn('Cult | Slayer', ctx['media'][0][2])
+        self.assertEqual(get.call_count, 2)
+
+    def test_ytdlp_download_is_bounded_and_uses_persistent_temp_directory(self):
+        options_seen = {}
+
+        class FakeYoutubeDL:
+            def __init__(self, options):
+                options_seen.update(options)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def extract_info(self, url, download):
+                self.path = options_seen['outtmpl'].replace('%(id)s', 'post').replace('%(ext)s', 'mp4')
+                for hook in options_seen['progress_hooks']:
+                    hook({'status': 'downloading', 'downloaded_bytes': 3})
+                with open(self.path, 'wb') as f:
+                    f.write(b'MP4')
+                return {'id': 'post', 'ext': 'mp4'}
+
+            def prepare_filename(self, info):
+                return self.path
+
+        fake_module = types.SimpleNamespace(YoutubeDL=FakeYoutubeDL)
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as root:
+            old_config = globvars.config_file
+            globvars.config_file = os.path.join(root, 'bot.json')
+            try:
+                with mock.patch.dict(sys.modules, {'yt_dlp': fake_module}):
+                    media = ai_tools._download_social_video('https://www.facebook.com/reel/123')
+            finally:
+                globvars.config_file = old_config
+
+        self.assertEqual(media, b'MP4')
+        self.assertEqual(options_seen['format'],
+                         'best[ext=mp4][acodec!=none][vcodec!=none]/best[ext=mp4]')
+        self.assertTrue(options_seen['noplaylist'])
+        self.assertTrue(options_seen['noprogress'])
+        self.assertEqual(options_seen['max_filesize'], ai_tools.MAX_MEDIA_BYTES)
+        self.assertEqual(os.path.dirname(options_seen['outtmpl']).split(os.sep)[-1].startswith('krypton-video-'), True)
+        self.assertFalse(os.path.dirname(options_seen['outtmpl']).startswith('/tmp/'))
+
+    def test_ytdlp_hosts_are_limited_to_supported_platforms(self):
+        for url in ('https://www.facebook.com/reel/123', 'https://fb.watch/abc',
+                    'https://vm.tiktok.com/abc'):
+            self.assertTrue(ai_tools._is_supported_video_url(url))
+        for url in ('https://facebook.com.attacker.invalid/reel/123',
+                    'https://user:pass@www.facebook.com/reel/123',
+                    'file:///etc/passwd', 'https://example.com/video'):
+            self.assertFalse(ai_tools._is_supported_video_url(url))
+
+    def test_ytdlp_progress_hook_aborts_download_over_limit(self):
+        class OversizeYoutubeDL:
+            def __init__(self, options):
+                self.options = options
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+            def extract_info(self, url, download):
+                self.options['progress_hooks'][0]({
+                    'status': 'downloading', 'downloaded_bytes': ai_tools.MAX_MEDIA_BYTES + 1})
+
+        with tempfile.TemporaryDirectory(dir=os.getcwd()) as root:
+            old_config = globvars.config_file
+            globvars.config_file = os.path.join(root, 'bot.json')
+            try:
+                with mock.patch.dict(sys.modules, {'yt_dlp': types.SimpleNamespace(YoutubeDL=OversizeYoutubeDL)}):
+                    with self.assertRaisesRegex(ValueError, 'upload limit'):
+                        ai_tools._download_social_video('https://www.facebook.com/reel/123')
+            finally:
+                globvars.config_file = old_config
 
     def test_calculator(self):
         calc = lambda e: ai_tools.calculator({'expression': e}, {}, {})

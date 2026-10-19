@@ -6,9 +6,11 @@ import ast
 import ipaddress
 import json
 import logging
+import os
 import operator
 import re
 import socket
+import tempfile
 import time
 from html import unescape
 from html.parser import HTMLParser
@@ -16,7 +18,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
-from lib import lib
+from lib import globvars, lib
 
 logger = logging.getLogger(__name__)
 
@@ -144,11 +146,55 @@ INSTAGRAM_PATH = re.compile(r'^/(?:[\w.]+/)?(p|reel|reels|tv)/([\w-]+)')
 # users paste mirror links (kkinstagram...) too; only the post code is used, the fetch always goes to instagram.com
 INSTAGRAM_HOSTS = ('instagram.com', 'kkinstagram.com', 'ddinstagram.com')
 INSTAGRAM_CDN = ('.fbcdn.net', '.cdninstagram.com')
+YTDLP_HOSTS = ('facebook.com', 'fb.watch', 'tiktok.com')
 MAX_MEDIA_BYTES = 45_000_000  # Telegram bots can upload up to 50 MB
 
 
 def is_instagram(url):
     return '.'.join((urlparse(url).hostname or '').split('.')[-2:]) in INSTAGRAM_HOSTS
+
+
+def _is_supported_video_url(url):
+    p = urlparse(url)
+    host = (p.hostname or '').lower()
+    return (p.scheme in ('http', 'https') and not p.username and not p.password and
+            any(host == domain or host.endswith('.' + domain) for domain in YTDLP_HOSTS))
+
+
+def _download_social_video(url):
+    """Download one public Facebook/TikTok MP4 using yt-dlp, bounded and off /tmp."""
+    import yt_dlp
+
+    # /tmp on the production host is a 107 MB tmpfs; config files live on persistent disk.
+    temp_root = os.path.dirname(os.path.abspath(globvars.config_file or 'config.json'))
+    with tempfile.TemporaryDirectory(prefix='krypton-video-', dir=temp_root) as tmp:
+        def limit_size(status):
+            if status.get('status') == 'downloading' and status.get('downloaded_bytes', 0) > MAX_MEDIA_BYTES:
+                raise ValueError('video exceeds the Telegram upload limit')
+
+        options = {
+            'format': 'best[ext=mp4][acodec!=none][vcodec!=none]/best[ext=mp4]',
+            'outtmpl': os.path.join(tmp, '%(id)s.%(ext)s'),
+            'max_filesize': MAX_MEDIA_BYTES,
+            'noplaylist': True,
+            'quiet': True,
+            'noprogress': True,
+            'no_warnings': True,
+            'logger': logger,
+            'socket_timeout': 20,
+            'retries': 1,
+            'fragment_retries': 1,
+            'extractor_retries': 1,
+            'progress_hooks': [limit_size],
+        }
+        with yt_dlp.YoutubeDL(options) as downloader:
+            info = downloader.extract_info(url, download=True)
+            path = downloader.prepare_filename(info)
+        size = os.path.getsize(path)
+        if size > MAX_MEDIA_BYTES:
+            raise ValueError('video exceeds the Telegram upload limit')
+        with open(path, 'rb') as media:
+            return media.read()
 
 
 def instagram_preview(args, config, ctx):
@@ -214,8 +260,9 @@ TELEGRAM_UA = "TelegramBot (like TwitterBot)"  # sites serve their Open Graph ta
 MAX_PHOTO_BYTES = 8_000_000
 
 
-@tool("Show a preview of any URL in the chat: image + title + description for web pages, the photo/video "
-      "for Instagram posts and reels. The bot builds and sends it itself as the whole answer (your text is "
+@tool("Show a preview of any URL in the chat: image + title + description for web pages, a direct video "
+      "when the page exposes one, or the photo/video for Instagram posts and reels. The bot builds and sends "
+      "it itself as the whole answer (your text is "
       "discarded), so nothing more is needed. Use it when the user asks for a link/URL preview.",
       {"url": {"type": "string"}}, ["url"])
 def link_preview(args, config, ctx):
@@ -224,6 +271,12 @@ def link_preview(args, config, ctx):
         return "A preview is already attached."
     if is_instagram(url):
         return instagram_preview(args, config, ctx)
+    if _is_supported_video_url(url):
+        try:
+            data = _download_social_video(url)
+            return _attach_preview(ctx, 'video', data, url)
+        except Exception as e:
+            logger.info("yt-dlp preview unavailable (%s); trying page metadata", type(e).__name__)
     try:
         raw, _, final, enc = _http_get(url, 300_000, ('text/html', 'application/xhtml'), TELEGRAM_UA)
         page = _Meta()
@@ -232,11 +285,19 @@ def link_preview(args, config, ctx):
         title = m.get('og:title') or m.get('twitter:title') or page.title.strip()
         desc = m.get('og:description') or m.get('twitter:description') or m.get('description', '')
         image = m.get('og:image') or m.get('twitter:image')
-        if not (title or desc or image):
+        video = (m.get('og:video:secure_url') or m.get('og:video:url') or m.get('og:video') or
+                 m.get('twitter:player:stream'))
+        if not (title or desc or image or video):
             raise ValueError("the page has no title, description or image to preview "
                              "(it may need JavaScript or a login)")
         caption = "\n".join(x for x in (re.sub(r'\s+', ' ', title), re.sub(r'\s+', ' ', desc)[:500], final) if x)[:1000]
         data = None
+        if video:
+            try:  # many sites expose an embed page instead of a directly downloadable video
+                data, ctype, _, _ = _http_get(urljoin(final, video), MAX_MEDIA_BYTES, ('video/',), TELEGRAM_UA)
+                return _attach_preview(ctx, 'video', data, caption)
+            except (OSError, ValueError):
+                pass
         if image:
             try:  # a missing image is not fatal: fall back to a text card
                 data, ctype, _, _ = _http_get(urljoin(final, image), MAX_PHOTO_BYTES, ('image/',), TELEGRAM_UA)
@@ -246,7 +307,11 @@ def link_preview(args, config, ctx):
                 data = None
     except (OSError, ValueError) as e:
         return _failed(e)
-    ctx.setdefault('media', []).append(('image', data, caption) if data else ('text', None, caption))
+    return _attach_preview(ctx, 'image' if data else 'text', data, caption)
+
+
+def _attach_preview(ctx, kind, data, caption):
+    ctx.setdefault('media', []).append((kind, data, caption))
     return "Preview attached; it will be sent as the whole answer. Reply just 'ok'."
 
 
